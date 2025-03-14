@@ -1,4 +1,10 @@
 flask
 flask_sqlalchemy
 flask_mail
-opencv-python
+flask_session
+flask_socketio
+flask_cors
+imutils
+dotenv
+numpy<=1.25
+opencv-python<=4.9.0

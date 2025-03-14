@@ -20,7 +20,7 @@ def generate_video_stream():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-@app.route('/api/video_stream')
+@app.route('/')
 def video_stream():
     return Response(generate_video_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
