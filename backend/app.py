@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 from imutils.video import VideoStream
 import numpy as np
+from camera import Camera
+import config
 
 load_dotenv()
 
@@ -69,6 +71,7 @@ brightness_prev = 0
 motion_sensitivity = 3
 
 v_stream = None   # VideoStream
+camera = Camera(use_picamera=config.USE_PICAMERA)
 is_recording = False
 v_writer = None     # Video Writer
 recording_timer = None  # To track the timer object
@@ -134,9 +137,11 @@ def generate_video_stream():
     global is_recording, v_writer, recording_timer, \
         recorded_video_path, last_motion_check, isArmed, \
         motion_count, brightness, motion_sensitivity, detection_ready_cnt
-    vs = get_video_stream() # Initialize vs only when needed
+    #vs = get_video_stream() # Initialize vs only when needed
+    camera.start()
     while True:
-        frame = vs.read()
+        #frame = vs.read()
+        frame = camera.get_frame()
         motion_detected = False
 
         # Check for motion every 0.5 seconds
@@ -456,7 +461,8 @@ def serve_frontend(path):
 
 # Cleanup on App Termination
 def cleanup(signum, frame):
-    release_video_stream()
+    camera.stop()
+    #release_video_stream()
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup)   # Handle Ctrl+C

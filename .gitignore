@@ -30,3 +30,4 @@ yarn-error.log*
 .env
 
 */flask_session
+*/__pycache__
