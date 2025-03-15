@@ -5,11 +5,21 @@ export default function ToggleMode() {
     const [sensitivity, setSensitivity] = useState(3);  // Default sensitivity level
     const [sendNotification, setSendNotification] = useState(false);
 
+    // Load settings on initial page load
     useEffect(() => {
-        // Fetch current camera mode on load
-        fetch(`${process.env.REACT_APP_API_BASE_URL}/api/get_mode`)
-            .then(res => res.json())
-            .then(data => setIsArmed(data.mode === 'ARMED'));
+        const loadSettings = async () => {
+            try {
+                const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/get_settings`);
+                const data = await response.json();
+
+                setIsArmed(data.isArmed);
+                setSensitivity(data.motion_sensitivity);
+            } catch (error) {
+                console.error('Error fetching settings:', error);
+            }
+        };
+
+        loadSettings();
     }, []);
 
     const handleToggle = async () => {

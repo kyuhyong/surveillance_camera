@@ -277,6 +277,14 @@ def video_stream():
     """Live video stream with motion detection"""
     return Response(generate_video_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+# Endpoint to get current settings
+@app.route('/api/get_settings', methods=['GET'])
+def get_settings():
+    return jsonify({
+        "isArmed": isArmed,
+        "motion_sensitivity": motion_sensitivity
+    })
+
 @app.route('/api/toggle_mode', methods=['POST'])
 def toggle_mode():
     global isArmed

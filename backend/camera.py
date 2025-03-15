@@ -1,6 +1,5 @@
 import cv2
 from imutils.video import VideoStream
-from picamera2 import Picamera2
 import time
 
 # Try importing Picamera2 safely
