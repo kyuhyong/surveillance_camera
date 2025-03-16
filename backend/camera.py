@@ -1,6 +1,7 @@
 import cv2
 from imutils.video import VideoStream
 import time
+import config
 
 # Try importing Picamera2 safely
 try:
@@ -24,6 +25,15 @@ class Camera:
             if self.use_picamera and PICAMERA_AVAILABLE:
                 print("Starting Picamera2...")
                 self.stream = Picamera2()
+                #camera_config = self.stream.create_video_configuration(
+                #   controls={"FrameRate": 25}  # Stable 20 FPS
+                #)
+                camera_config = self.stream.create_video_configuration({
+                    "format": "RGB888",       # Preferred for OpenCV compatibility
+                    "size": (config.IMAGE_WIDTH, config.IMAGE_HEIGHT)       # Standard HD resolution
+                })
+                self.stream.configure(camera_config)
+                self.stream.set_controls({"FrameRate": 20})
                 self.stream.start()
             else:
                 print("Starting VideoStream...")
@@ -31,14 +41,19 @@ class Camera:
                 time.sleep(2.0)  # Warm-up time for webcam
 
     def get_frame(self):
-        if self.use_picamera and PICAMERA_AVAILABLE:
-            frame_in = self.stream.capture_array()
-            frame = cv2.cvtColor(frame_in, cv2.COLOR_RGB2BGR)
-        else:
-            frame = self.stream.read()
-
-        #_, jpeg = cv2.imencode('.jpg', frame)
-        return frame #jpeg.tobytes()
+        try:
+            if self.use_picamera and PICAMERA_AVAILABLE:
+                frame = self.stream.capture_array()
+                assert frame is not None and frame.size != 0
+                #frame = cv2.cvtColor(frame_in, cv2.COLOR_RGB2BGR)
+            else:
+                frame = self.stream.read()
+                assert frame is not None and frame.size != 0
+            #_, jpeg = cv2.imencode('.jpg', frame)
+            return frame
+        except AssertionError:
+            print("Error: Empty or invalid frame detected")
+            return None
 
     def stop(self):
         if self.stream:

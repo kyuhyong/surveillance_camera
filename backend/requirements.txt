@@ -8,3 +8,4 @@ imutils
 dotenv
 numpy<=1.25
 opencv-python<=4.9.0
+gevent
