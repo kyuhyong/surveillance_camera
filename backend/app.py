@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from flask import Flask, request, jsonify, send_file, Response, session
 from flask import send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -8,18 +10,27 @@ import logging, os, signal, sys, cv2, threading, time, subprocess
 from datetime import datetime
 from dotenv import load_dotenv
 from flask_cors import CORS
-from imutils.video import VideoStream
-import numpy as np
-from camera import Camera
 import config
 import queue
 import threading
-from rpi_handler import RpiHandler
+# To store armed state into json file
+from state_manager import get_armed_status, set_armed_status, get_motion_sensitivity, set_motion_sensitivity
+import multiprocessing
+from detector_service import detector_service  # Import function from `detector_service.py`
 
 load_dotenv()
 
+# Initialize Flask app and SocketIO
 app = Flask(__name__, static_folder='build')
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Queue to receive frames from `detector_service.py`
+frame_queue = multiprocessing.Queue(maxsize=10)
+notification_queue = multiprocessing.Queue(maxsize=5)
+
+# Start detector process
+detector_process = multiprocessing.Process(target=detector_service, args=(frame_queue, notification_queue))
+detector_process.start()
 
 # Suppress Flask's default HTTP request logs
 log = logging.getLogger('werkzeug')
@@ -45,45 +56,7 @@ app.secret_key = os.getenv('SECRET_KEY')
 db = SQLAlchemy(app)
 mail = Mail(app)
 
-# Path to save motion-detected videos
-CLIPS_FOLDER = 'recorded_clips'
-os.makedirs(CLIPS_FOLDER, exist_ok=True)
-STREAM_FOLDER = 'stream_clips'
-os.makedirs(STREAM_FOLDER, exist_ok=True)
-IMAGES_FOLDER = 'recorded_images'
-os.makedirs(IMAGES_FOLDER, exist_ok=True)
-
-# Motion detection settings
-#DETECTION_DURATION = 10   # Recording duration (seconds) after motion is detected
-# Desired Frame Rate (FPS)
-#TARGET_FPS = 25  # Change this value for slower frame rates
-FRAME_DELAY = 1.0 / config.TARGET_FPS  # Delay to match target FPS
-print(f"FPS={config.TARGET_FPS}, DELAY={FRAME_DELAY}")
-# Set retention period in days (e.g., delete files older than 7 days)
-RETENTION_DAYS = 7
-# Brightness threashold for ready to detect motion
-BRIGHTNESS_THREASHOLD = 50
-
-# Motion detection variables
-isArmed = False     # Global state to manage ARM/DISARM mode
-detection_ready_cnt = 0 # Detection readyness delay
-prev_frame = None
-last_motion_check = 0
-motion_count = 0
-brightness = 0
-brightness_prev = 0
-motion_sensitivity = 3
-
-v_stream = None   # VideoStream
-camera = Camera(use_picamera=config.USE_PICAMERA)
-is_recording = False
-v_writer = None     # Video Writer
-recording_timer = None  # To track the timer object
-recorded_video_path = ""
-# Buffer to temporarily hold frames
-frame_queue = queue.Queue(maxsize=50)  # Queue prevents memory overflow
 sendNotification = False # Notification state
-rpi = RpiHandler()
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -97,245 +70,55 @@ class Clip(db.Model):
     date = db.Column(db.String(50), nullable=False)
     time = db.Column(db.String(50), nullable=False)
 
-# Background thread to write frames efficiently
-def write_frames():
-    global  v_writer
-    #print(f"Write queue started!")
+# Thread to read notifications and broadcast to frontend
+def notify_frontend():
+    print("Notification thread started!")
     while True:
         try:
-            frame = frame_queue.get(timeout=5)
-            if v_writer is not None:
-                v_writer.write(frame.copy())
-                frame_queue.task_done()
-        except queue.Empty:
-            break
-        except Exception as e:
-            print(f"❌ Error writing video frame: {e}")
-# Start background thread for writing
-#threading.Thread(target=write_frames, daemon=True).start()
+            if not notification_queue.empty():
+                clip_info = notification_queue.get(timeout=5)
+                socketio.emit('new_clip', clip_info)
+        except multiprocessing.queues.Empty:
+            pass  # No new clips yet, continue waiting
+        time.sleep(1)
 
-# Lazy Initialization for Video Stream
-def get_video_stream():
-    global v_stream
-    if v_stream is None:
-        print("🎥 Initializing video stream...")
-        v_stream = VideoStream(src=0).start()
-    return v_stream
-
-# Gracefully stop video stream when Flask stops
-def release_video_stream():
-    global v_stream
-    if v_stream is not None:
-        print("🔄 Releasing camera...")
-        v_stream.stop()
-        v_stream = None  # Reset `vs` after releasing the camera
-# ============================== #
-#         Motion Detection       #
-# ============================== #
-def check_motion(new_frame):
-    global prev_frame
-    gray = cv2.cvtColor(new_frame, cv2.COLOR_RGB2GRAY)
-    gray = cv2.GaussianBlur(gray, (21, 21), 0)
-    if prev_frame is None:
-        prev_frame = gray
-
-    # Compute difference and threshold
-    frame_delta = cv2.absdiff(prev_frame, gray)
-    _, thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)
-
-    # Dilate the threshold image to fill in holes
-    thresh = cv2.dilate(thresh, None, iterations=2)
-
-    # Find contours to detect motion
-    contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    detect = 0
-    for contour in contours:
-        if cv2.contourArea(contour) < 500:  # Ignore small movements
-            continue
-        detect += 1
-    
-    prev_frame = gray
-    return detect, int(round(np.mean(gray)))
-    
-def generate_video_stream():
-    global is_recording, v_writer, recording_timer, \
-        recorded_video_path, last_motion_check, isArmed, \
-        motion_count, brightness, motion_sensitivity, detection_ready_cnt
-    #last_frame_time = time.perf_counter()
-    #vs = get_video_stream() # Initialize vs only when needed
-    # Define the position and font
-    position = (10, 30)  # Position to place the text
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 1
-    color = (0, 255, 0)  # Green color in BGR
-    thickness = 2
-    camera.start()
-    while True:
-        #frame = vs.read()
-        frame = camera.get_frame()
-        if frame is not None:
-            motion_detected = False
-
-            # Check for motion every 0.5 seconds
-            current_time = time.time()
-            if current_time - last_motion_check >= 0.5:
-                motion_count, brightness = check_motion(frame)
-                # Check if image is bright enough to check detection
-                if brightness > BRIGHTNESS_THREASHOLD:
-                    if detection_ready_cnt > 3:
-                        if motion_count > motion_sensitivity:
-                            motion_detected = True
-                    else:
-                        detection_ready_cnt+=1
-                else:
-                    # Image is too dark for detection so reset count
-                    detection_ready_cnt = 0
-                
-                last_motion_check = current_time
-
-            # Get the current time
-            current_time = datetime.now().strftime("%d/%m/%y, %H:%M:%S")
-            
-            # Overlay the text on the frame
-            cv2.putText(frame, current_time, position, font, font_scale, color, thickness)
-            
-            # Start recording when motion is detected
-            if motion_detected and isArmed:
-                if not is_recording:
-                    is_recording = True
-                    start_recording(frame)
-
-            # Record images to video
-            if is_recording and v_writer is not None:
-                # Ensure the queue never overflows
-                #if not frame_queue.full():
-                #    print(f"Queue {frame_queue.qsize()}")
-                #    frame_queue.put(frame.copy())
-                try:
-                    v_writer.write(frame)
-                except Exception as e:
-                    print(f"❌ Error writing video: {e}")
-
-            # Stop recording if switching to DISARMED
-            if not isArmed and is_recording:
-                stop_recording()
-
-            # Label onscreen message
-            txt = ("REC " if is_recording else "" )+"Motion:"+str(motion_count)+" @"+str(detection_ready_cnt)
-            cv2.putText(frame, txt, (10, 60), font, font_scale, color, thickness)
-            txt = "Brightness:"+str(brightness)
-            cv2.putText(frame, txt, (10, 90), font, font_scale, color, thickness)
-            
-            # Encode frame for live streaming
-            _, buffer = cv2.imencode('.jpg', frame)
-            frame_bytes = buffer.tobytes()
-            # Reduce frame rate
-            #time.sleep(FRAME_DELAY)
-            # Efficient delay using cv2.waitKey
-            if cv2.waitKey(int(1000 / config.TARGET_FPS)) & 0xFF == ord('q'):
-                break
-            #  now = time.perf_counter()
-            #  elapsed = now - last_frame_time
-            #  delay = max(0, FRAME_DELAY - elapsed)
-            #  last_frame_time = now
-
-            # Efficient non-blocking delay
-            #if delay > 0:
-            #    sleep(delay)
-            yield (b'--frame\r\n'
-                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-
-def save_first_frame(frame, timestamp):
-    """Save the first detected frame as an image"""
-    image_path = os.path.join(IMAGES_FOLDER, f'image_{timestamp}.jpg')
-    cv2.imwrite(image_path, frame)
-
-def start_recording(frame):
-    global v_writer, recorded_video_path, recording_timer
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    video_path = os.path.join(CLIPS_FOLDER, f'motion_{timestamp}.mp4')
-    print(f"🎥 Motion detected : {video_path}")
-    recorded_video_path = video_path
-    save_first_frame(frame, timestamp)
-    #fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')
-    v_writer = cv2.VideoWriter(video_path, fourcc, 20.0, (config.IMAGE_WIDTH, config.IMAGE_HEIGHT))
-    # Start a timer to stop recording after a set duration
-    if recording_timer:
-        recording_timer.cancel()  # Cancel any active timer
-    recording_timer = threading.Timer(config.DETECTION_DURATION, stop_recording)
-    recording_timer.start()
-
-def stop_recording():
-    """Stop recording safely with proper resource cleanup"""
-    global is_recording, v_writer, recorded_video_path
-    if is_recording:
-        if v_writer is not None:   # Safely release the VideoWriter
-            v_writer.release()
-            v_writer = None
-
-        # Convert mp4 video to web-compatible format
-        filename = os.path.basename(recorded_video_path)
-        converted_path = os.path.join(STREAM_FOLDER, filename)
-        convert_to_web_compatible(recorded_video_path, converted_path)
-        is_recording = False
-        timestamp_str = '_'.join(filename.split('_')[1:3]).replace('.mp4','')
-        
-        # Format timestamp for display (e.g., "2025-03-11 23:46:30")
-        formatted_timestamp = timestamp_str.replace('_', ' ')
-        image_filename = filename.replace('.mp4','.jpg').replace('motion','image')
-
-        # Notify frontend with new clip
-        socketio.emit('new_clip', {
-            "timestamp": formatted_timestamp,
-            "image_filename": image_filename, 
-            "video_filename": filename
-        })
-        print(f"🛑 Stopping recording : {datetime.now()}")
-
-# Auto-delete function
-def auto_delete_old_clips():
-    print(f"AUTO DELETE STARTED!")
-    while True:
-        now = datetime.now()
-        for filename in os.listdir(CLIPS_FOLDER):
-            file_path = os.path.join(CLIPS_FOLDER, filename)
-            if os.path.isfile(file_path):
-                # Extract the date from the filename
-                try:                  
-                    date_str = '_'.join(filename.split('_')[1:3]).split('.')[0]
-                    file_date = datetime.strptime(date_str, "%Y-%m-%d_%H-%M-%S")
-                    # Calculate file age
-                    if (now - file_date).days > RETENTION_DAYS:
-                        os.remove(file_path)
-                        print(f"🗑️ Deleted old clip: {filename}")
-                except (IndexError, ValueError):
-                    print(f"❗ Invalid filename format: {filename}")
-        
-        # Check for old files every 24 hours
-        time.sleep(24 * 3600)  # 86400 seconds = 1 day
-
-# Start the auto-delete function in a separate thread
-threading.Thread(target=auto_delete_old_clips, daemon=True).start()
+# Start background notification thread
+threading.Thread(target=notify_frontend, daemon=True).start()
 
 @app.route('/api/video_stream')
 def video_stream():
-    """Live video stream with motion detection"""
+    # Get frame in the queue received from 'detector_service.py'
+    def generate_video_stream():
+        while True:
+            try:
+                if not frame_queue.empty():
+                    frame = frame_queue.get()
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    frame_bytes = buffer.tobytes()
+
+                    yield (b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            except Exception as e:
+                print(f"❌ Error fetching frame from queue: {e}")
+
     return Response(generate_video_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 # Endpoint to get current settings
 @app.route('/api/get_settings', methods=['GET'])
 def get_settings():
     return jsonify({
-        "isArmed": isArmed,
-        "motion_sensitivity": motion_sensitivity
+        # Fetch from state stored in json file
+        "isArmed": get_armed_status(), #isArmed,
+        "motion_sensitivity": get_motion_sensitivity() #motion_sensitivity
     })
 
 @app.route('/api/toggle_mode', methods=['POST'])
 def toggle_mode():
-    global isArmed
+    #global isArmed
     data = request.json
     isArmed = data.get('isArmed', False)
+    # Store current armed state
+    set_armed_status(isArmed)
     status = 'ARMED' if isArmed else 'DISARMED'
     print(f"🔒 Camera mode set to: {status}")
     return jsonify({"message": f"Camera mode is now {status}"})
@@ -350,9 +133,10 @@ def set_notification():
 
 @app.route('/api/set_sensitivity', methods=['POST'])
 def set_sensitivity():
-    global motion_sensitivity
+    #global motion_sensitivity
     data = request.json
     motion_sensitivity = data.get('sensitivity', 3)
+    set_motion_sensitivity(motion_sensitivity)
     print(f"🎯 Motion detection sensitivity set to: {motion_sensitivity}")
     return jsonify({"message": f"Sensitivity set to {motion_sensitivity}"})
 
@@ -361,11 +145,10 @@ def get_clips():
     """List recorded motion-detected clips"""
     clips = []
     # Collect both video and image data
-    for video_file in os.listdir(CLIPS_FOLDER):
+    for video_file in os.listdir(config.CLIPS_FOLDER):
         if video_file.endswith('.mp4'):
             timestamp_str = '_'.join(video_file.split('_')[1:3]).replace('.mp4','')
             image_file = f"image_{timestamp_str}.jpg"
-
             # Format timestamp for display (e.g., "2025-03-11 23:46:30")
             formatted_timestamp = timestamp_str.replace('_', ' ')
             #print(f"video_file = {video_file}")
@@ -382,14 +165,14 @@ def get_clips():
 @app.route('/api/image/<string:filename>')
 def view_image(filename):
     try:
-        return send_from_directory(IMAGES_FOLDER, filename, mimetype='image/jpeg')
+        return send_from_directory(config.IMAGES_FOLDER, filename, mimetype='image/jpeg')
     except FileNotFoundError:
         abort(404, description="Image not found")
 
 # Serve Videos with Streaming Support
 @app.route('/api/video/<string:filename>')
 def view_video(filename):
-    video_path = os.path.join(STREAM_FOLDER, filename)
+    video_path = os.path.join(config.STREAM_FOLDER, filename)
 
     if not os.path.exists(video_path):
         abort(404, description="Video file not found")
@@ -417,55 +200,16 @@ def generate_rec_video_stream(video_path):
     except Exception as e:
         print(f"❌ Error streaming video: {e}")
 
-def convert_to_web_compatible(input_path, output_path):
-    """Converts recorded video to web-compatible `.mp4` format"""
-    try:
-        if config.USE_PICAMERA:
-            #subprocess.run([
-            #     'ffmpeg', '-i', input_path,
-            #     '-c:v', 'h264_v4l2m2m',
-            #     '-b:v', '1000k',
-            #     '-r', '20',               # Force stable 25 FPS
-            #     '-movflags', '+faststart',    # Enables fast web streaming
-            #     '-pix_fmt', 'yuv420p',        # Ensures maximum compatibility
-            #     '-hide_banner', '-loglevel','error',
-            #     '-preset', 'ultrafast',
-            #     output_path
-            # ], check=True)
-            subprocess.run([
-                'ffmpeg', '-i', input_path,
-                '-c:v', 'libx264',
-                '-crf', '23',
-                '-r', '20',
-                '-vsync', '1',
-                '-hide_banner', '-loglevel','error',
-                '-preset', 'ultrafast',
-                '-movflags', '+faststart',
-                output_path
-            ], check=True)
-        else:
-            subprocess.run([
-                'ffmpeg', '-i', input_path,
-                '-c:v', 'libx264',
-                '-crf', '23',
-                '-hide_banner', '-loglevel','error',
-                '-preset', 'fast',
-                '-movflags', '+faststart',
-                output_path
-            ], check=True)
-        print(f"✅ Conversion successful: {output_path}")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Conversion failed: {e}")
 
 @app.route('/api/delete_clip/<string:filename>', methods=['DELETE'])
 def delete_clip(filename):
     """Delete recorded video"""
     try:
-        os.remove(os.path.join(CLIPS_FOLDER, filename))
-        os.remove(os.path.join(STREAM_FOLDER, filename))
+        os.remove(os.path.join(config.CLIPS_FOLDER, filename))
+        os.remove(os.path.join(config.STREAM_FOLDER, filename))
         image_filename = filename.replace('.mp4','.jpg').replace('motion','image')
         #print(f"DELETE: image_filename={image_filename}")
-        os.remove(os.path.join(IMAGES_FOLDER, image_filename))
+        os.remove(os.path.join(config.IMAGES_FOLDER, image_filename))
         return jsonify({"message": "Clip deleted successfully"})
     except FileNotFoundError:
         return jsonify({"error": "File not found"}), 404
@@ -536,15 +280,6 @@ def serve_frontend(path):
     if path != "" and os.path.exists(f"build/{path}"):
         return send_from_directory('build', path)
     return send_from_directory('build', 'index.html')
-
-# Cleanup on App Termination
-def cleanup(signum, frame):
-    camera.stop()
-    #release_video_stream()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, cleanup)   # Handle Ctrl+C
-signal.signal(signal.SIGTERM, cleanup)  # Handle termination
 
 if __name__ == "__main__":
     with app.app_context():
