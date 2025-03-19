@@ -6,12 +6,11 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail, Message
 from flask_session import Session
 from flask_socketio import SocketIO, emit
-import logging, os, signal, sys, cv2, threading, time, subprocess
+import logging, os, cv2, threading, time
 from datetime import datetime
 from dotenv import load_dotenv
 from flask_cors import CORS
 import config
-import queue
 import threading
 # To store armed state into json file
 from state_manager import get_armed_status, set_armed_status, get_motion_sensitivity, set_motion_sensitivity
@@ -200,6 +199,14 @@ def generate_rec_video_stream(video_path):
     except Exception as e:
         print(f"❌ Error streaming video: {e}")
 
+@app.route('/api/download_clip/<string:filename>')
+def download_clip(filename):
+    video_path = os.path.join(config.CLIPS_FOLDER, filename)
+
+    if not os.path.exists(video_path):
+        abort(404, description="Video file not found")
+
+    return send_file(video_path, as_attachment=True)
 
 @app.route('/api/delete_clip/<string:filename>', methods=['DELETE'])
 def delete_clip(filename):

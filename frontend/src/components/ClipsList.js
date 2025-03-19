@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FaTrash } from 'react-icons/fa';  // Import trash icon
+import { FaDownload } from 'react-icons/fa';  // Import download icon
 import { io } from 'socket.io-client';
 
 export default function ClipsList() {
@@ -23,6 +24,16 @@ export default function ClipsList() {
     const handleDelete = async (filename) => {
         await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/delete_clip/${filename}`, { method: 'DELETE' });
         setClips(clips.filter(clip => clip.video_filename !== filename));
+    };
+    // Download Handler
+    const handleDownload = (filename) => {
+        const downloadUrl = `${process.env.REACT_APP_API_BASE_URL}/api/download_clip/${filename}`;
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename; // Ensures the proper filename is set
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     };
     const handleImageClick = (videoFilename) => {
         // Toggle video playback when image is clicked
@@ -58,6 +69,14 @@ export default function ClipsList() {
                             Your browser does not support the video tag.
                         </video>
                     )}
+                    {/* Download Button with Icon */}
+                    <button
+                        style={styles.downloadButton}
+                        onClick={() => handleDownload(clip.video_filename)}
+                        title="Download this clip"
+                    >
+                        <FaDownload style={styles.icon} />
+                    </button>
 
                     {/* Smaller Delete Button with Trash Icon */}
                     <button 
@@ -121,5 +140,25 @@ const styles = {
     },
     deleteButtonHover: {
         backgroundColor: '#d32f2f' // Darker red on hover
+    },
+    downloadButton: {
+        backgroundColor: '#4CAF50',
+        color: '#fff',
+        border: 'none',
+        padding: '8px 10px',
+        borderRadius: '30%',
+        width: '40px',
+        height: '40px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        transition: 'background-color 0.2s ease'
+    },
+    downloadButtonHover: {
+        backgroundColor: '#45a049'
+    },
+    icon: {
+        fontSize: '18px'
     }
 };

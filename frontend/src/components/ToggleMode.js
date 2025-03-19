@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { FaCog } from 'react-icons/fa'; // Gear Icon
 
 export default function ToggleMode() {
+    const [showSettings, setShowSettings] = useState(false); // State for expanded panel
     const [isArmed, setIsArmed] = useState(false);
-    const [sensitivity, setSensitivity] = useState(3);  // Default sensitivity level
     const [sendNotification, setSendNotification] = useState(false);
+    const [sensitivity, setSensitivity] = useState(3);  // Default sensitivity level
 
     // Load settings on initial page load
     useEffect(() => {
@@ -57,44 +59,57 @@ export default function ToggleMode() {
 
     return (
         <div style={styles.container}>
-            {/*<h3>Camera Mode: {isArmed ? 'ARMED' : 'DISARMED'}</h3>*/}
-            <p>Camera Mode: <b>{isArmed ? 'ARMED' : 'DISARMED'}</b></p>
-            {/* ARM/DISARM + Checkbox Side by Side */}
-            <div style={styles.toggleContainer}>
-                <button 
-                    style={{
-                        ...styles.toggleButton,
-                        backgroundColor: isArmed ? '#f44336' : '#4CAF50' // Red for ARMED, Green for DISARMED
-                    }}
-                    onClick={handleToggle}
-                >
-                    {isArmed ? 'Disarm' : 'Arm'}
-                </button>
-                {/* Notification Checkbox */}
-                <div style={styles.checkboxContainer}>
-                    <input
-                        type="checkbox"
-                        id="notification"
-                        checked={sendNotification}
-                        onChange={handleNotificationChange}
-                    />
-                    <label htmlFor="notification">Send Notification</label>
-                </div>
-            </div>
-            {/* Motion Sensitivity Slider */}
-            <div style={styles.sensitivityContainer}>
-                <label htmlFor="sensitivity">Motion Sensitivity:</label>
-                <input
-                    type="range"
-                    id="sensitivity"
-                    min="1"
-                    max="5"
-                    value={sensitivity}
-                    onChange={handleSensitivityChange}
-                    style={styles.slider}
+            <div style={styles.mainContent}>
+                <h3>Camera Mode: <b>{isArmed ? 'ARMED' : 'DISARMED'}</b></h3>
+                {/* Gear Icon for Settings */}
+                    <h3>Settings: </h3><FaCog
+                    style={styles.gearIcon}
+                    onClick={() => setShowSettings(!showSettings)}
                 />
-                <span>{sensitivity}</span>
             </div>
+
+            {/* Expandable Settings Panel */}
+            {showSettings && (
+                <div style={styles.settingsPanel}>
+                    {/* ARM/DISARM */}
+                    <div style={styles.toggleContainer}>
+                        <button 
+                            style={{
+                                ...styles.toggleButton,
+                                backgroundColor: isArmed ? '#f44336' : '#4CAF50' // Red for ARMED, Green for DISARMED
+                            }}
+                            onClick={handleToggle}
+                        >
+                            {isArmed ? 'Disarm' : 'Arm'}
+                        </button>    
+                    </div>
+                    {/* Notification Checkbox */}
+                    <div style={styles.checkboxContainer}>
+                        <label htmlFor="notification">Send Notification : </label>
+                        <input
+                            type="checkbox"
+                            id="notification"
+                            checked={sendNotification}
+                            onChange={handleNotificationChange}
+                            style={styles.largeCheckbox}  // Increased size
+                        />    
+                    </div>
+                    {/* Motion Sensitivity Slider */}
+                    <div style={styles.sliderContainer}>
+                        <label htmlFor="sensitivity">Motion Sensitivity :</label>
+                        <input
+                            type="range"
+                            id="sensitivity"
+                            min="1"
+                            max="5"
+                            value={sensitivity}
+                            onChange={handleSensitivityChange}
+                            style={styles.slider}
+                        />
+                        <span>{sensitivity}</span>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -105,8 +120,31 @@ const styles = {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: '1px',
+        gap: '10px',
         margin: '1px 0'
+    },
+    mainContent: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '70%',
+        gap: '10px'
+    },
+    gearIcon: {
+        cursor: 'pointer',
+        fontSize: '24px',
+        color: '#363636',
+        marginLeft: '10px'
+    },
+    settingsPanel: {
+        width: '95%',
+        backgroundColor: '#efe',
+        border: '2px solid #ddd',
+        borderRadius: '10px',
+        padding: '5px',
+        marginTop: '5px',
+        marginBottom: '10px',
+        boxShadow: '10px 4px 8px rgba(0, 0, 0, 0.1)'
     },
     toggleContainer: {
         display: 'flex',
@@ -116,7 +154,7 @@ const styles = {
         justifyContent: 'center'
     },
     toggleButton: {
-        width: '50%',              // Set to 50% width
+        width: '40%',              // Set to 50% width
         color: 'white',
         border: 'none',
         padding: '10px',
@@ -127,12 +165,16 @@ const styles = {
     checkboxContainer: {
         display: 'flex',
         alignItems: 'center',
-        gap: '5px'
+        gap: '20px'
     },
-    sensitivityContainer: {
+    sliderContainer: {
         display: 'flex',
         alignItems: 'center',
-        gap: '10px'
+        gap: '80px'
+    },
+    largeCheckbox: {
+        transform: 'scale(2)',  // Enlarges the checkbox
+        cursor: 'pointer'
     },
     slider: {
         width: '200px',
