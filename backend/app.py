@@ -41,8 +41,10 @@ app.config['SESSION_TYPE'] = 'filesystem'  # Store session data on the server
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # Session expiry in seconds (e.g., 1 hour)
 Session(app)  # Initialize Flask-Session
-
+external_ip = os.getenv('EXTERNAL_IP')
+print(f"External IP: {external_ip}")
 CORS(app)
+#CORS(app, origins=['http://'+external_ip+':3000'])
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
