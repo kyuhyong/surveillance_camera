@@ -110,7 +110,7 @@ def detector_service(frame_queue, notification_queue):
                 motion_count, brightness = check_motion(frame)
                 # Check if image is bright enough to check detection
                 if brightness > BRIGHTNESS_THREASHOLD:
-                    if detection_ready_cnt > 3:
+                    if detection_ready_cnt > 2:
                         if motion_count > motion_sensitivity:
                             motion_detected = True
                     else:
@@ -145,7 +145,9 @@ def detector_service(frame_queue, notification_queue):
                 stop_recording()
                 
             # Label onscreen message
-            txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") )+" Motion:"+str(motion_count)+" @"+str(detection_ready_cnt)
+            txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") ) \
+                + " Motion: "+str(motion_count) \
+                + "("+str(motion_sensitivity)+")"
             cv2.putText(frame, txt, (10, 60), font, font_scale, color, thickness)
             txt = "Brightness:"+str(brightness)
             cv2.putText(frame, txt, (10, 90), font, font_scale, color, thickness)

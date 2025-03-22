@@ -21,6 +21,39 @@ export default function ClipsList() {
         return () => socket.disconnect();
     }, []);
 
+    // Group clips by date and time
+    const groupByDate = (clips) => {
+        const grouped = clips.reduce((acc, clip) => {
+            const [date, time] = clip.timestamp.split(' '); // Extract date only
+            if (!acc[date]) {
+                acc[date] = [];
+            }
+            acc[date].push(clip);
+            return acc;
+        }, {});
+
+        // Sort dates (latest date first)
+        const sortedDates = Object.entries(grouped).sort((a, b) => new Date(b[0]) - new Date(a[0]));
+
+        // Sort clips within each date group by time (latest first)
+        const sortedGrouped = {};
+        sortedDates.forEach(([date, clipsForDate]) => {
+            sortedGrouped[date] = clipsForDate.sort((a, b) => {
+                // Correctly convert timestamps into Date objects for sorting
+                //const timeA = new Date(a.timestamp.replace(' ', 'T').replace(/-/g, ':'));
+                //const timeB = new Date(b.timestamp.replace(' ', 'T').replace(/-/g, ':'));
+                const timeA = new Date(`${date}T${a.timestamp.split(' ')[1].replace(/-/g, ':')}`);
+                const timeB = new Date(`${date}T${b.timestamp.split(' ')[1].replace(/-/g, ':')}`);
+                return timeB - timeA;  // Sort latest first
+            });
+            console.log()
+        });
+
+        return sortedGrouped;
+    };
+
+    const groupedClips = groupByDate(clips);
+
     const handleDelete = async (filename) => {
         await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/delete_clip/${filename}`, { method: 'DELETE' });
         setClips(clips.filter(clip => clip.video_filename !== filename));
@@ -41,51 +74,58 @@ export default function ClipsList() {
     };
 
     return (
-        <div style={styles.clipsContainer}>
+        <div style={styles.container}>
             <h2>Recorded Clips</h2>
-            {clips.length === 0 && <p>No clips available</p>}
+            {/*{clips.length === 0 && <p>No clips available</p>}*/}
+            {Object.keys(groupedClips).length === 0 && <p>No clips available</p>}
 
-            {clips.map((clip, index) => (
-                <div key={index} style={styles.clipContainer}>
-                    {/* Timestamp Display */}
-                    <div style={styles.infoContainer}>
-                        <p style={styles.timestamp}>{clip.timestamp}</p>
-                    </div>
-                    {/* Thumbnail Image */}
-                    <img
-                        src={`${process.env.REACT_APP_API_BASE_URL}/api/image/${clip.image_filename}`}
-                        alt="Captured Image"
-                        style={styles.imagePreview}
-                        onClick={() => handleImageClick(clip.video_filename)}
-                        //onClick={() => setSelectedVideo(clip.video_filename)}  // Click image to play video
-                    />
-                    {/* Playable Video (if selected) */}
-                    {selectedVideo === clip.video_filename && (
-                        <video controls width="320" height="240" autoPlay>
-                            <source
-                                src={`${process.env.REACT_APP_API_BASE_URL}/api/video/${clip.video_filename}`}
-                                type="video/mp4"
+            {Object.entries(groupedClips).map(([date, clipsForDate]) => (
+                <div key={date} style={styles.dateGroup}>
+                    <h3 style={styles.dateHeader}>{date}</h3>
+
+                    {clipsForDate.map((clip) => (
+                        <div key={clip.id} style={styles.clipContainer}>
+                            {/* Timestamp Display */}
+                            <div style={styles.infoContainer}>
+                                <p style={styles.timestamp}>{clip.timestamp}</p>
+                            </div>
+                            {/* Thumbnail Image */}
+                            <img
+                                src={`${process.env.REACT_APP_API_BASE_URL}/api/image/${clip.image_filename}`}
+                                alt="Captured Image"
+                                style={styles.imagePreview}
+                                onClick={() => handleImageClick(clip.video_filename)}
+                                //onClick={() => setSelectedVideo(clip.video_filename)}  // Click image to play video
                             />
-                            Your browser does not support the video tag.
-                        </video>
-                    )}
-                    {/* Download Button with Icon */}
-                    <button
-                        style={styles.downloadButton}
-                        onClick={() => handleDownload(clip.video_filename)}
-                        title="Download this clip"
-                    >
-                        <FaDownload style={styles.icon} />
-                    </button>
+                            {/* Playable Video (if selected) */}
+                            {selectedVideo === clip.video_filename && (
+                                <video controls width="320" height="240" autoPlay>
+                                    <source
+                                        src={`${process.env.REACT_APP_API_BASE_URL}/api/video/${clip.video_filename}`}
+                                        type="video/mp4"
+                                    />
+                                    Your browser does not support the video tag.
+                                </video>
+                            )}
+                            {/* Download Button with Icon */}
+                            <button
+                                style={styles.downloadButton}
+                                onClick={() => handleDownload(clip.video_filename)}
+                                title="Download this clip"
+                            >
+                                <FaDownload style={styles.icon} />
+                            </button>
 
-                    {/* Smaller Delete Button with Trash Icon */}
-                    <button 
-                        style={styles.deleteButton} 
-                        onClick={() => handleDelete(clip.video_filename)}
-                        title="Delete this clip"
-                    >
-                        <FaTrash />
-                    </button>
+                            {/* Smaller Delete Button with Trash Icon */}
+                            <button 
+                                style={styles.deleteButton} 
+                                onClick={() => handleDelete(clip.video_filename)}
+                                title="Delete this clip"
+                            >
+                                <FaTrash />
+                            </button>
+                        </div>
+                    ))}
                 </div>
             ))}
         </div>
@@ -94,6 +134,23 @@ export default function ClipsList() {
 
 // Inline CSS for improved layout
 const styles = {
+    container: {
+        maxHeight: '60vh',
+        overflowY: 'auto',
+        padding: '10px'
+    },
+    dateGroup: {
+        marginBottom: '20px',
+        borderBottom: '2px solid #4CAF50',
+        paddingBottom: '10px'
+    },
+    dateHeader: {
+        backgroundColor: '#4CAF50',
+        color: '#fff',
+        padding: '8px 12px',
+        borderRadius: '4px',
+        marginBottom: '8px'
+    },
     clipsContainer: {
         maxHeight: '60vh',       // Limits the height of ClipsList to enable scrolling
         overflowY: 'auto',       // Enables scroll only for ClipsList
@@ -106,7 +163,8 @@ const styles = {
         marginBottom: '10px',
         border: '1px solid #ccc',
         padding: '10px',
-        borderRadius: '10px'
+        borderRadius: '5px',
+        backgroundColor: '#f9f9f9'
     },
     infoContainer: {
         display: 'flex',

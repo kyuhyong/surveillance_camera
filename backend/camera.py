@@ -52,7 +52,7 @@ class Camera:
             #_, jpeg = cv2.imencode('.jpg', frame)
             return frame
         except AssertionError:
-            print("Error: Empty or invalid frame detected")
+            #print("Error: Empty or invalid frame detected")
             return None
 
     def stop(self):
