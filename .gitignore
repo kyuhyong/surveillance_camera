@@ -34,3 +34,4 @@ instance/
 */__pycache__
 start_app.sh
 *.out
+*.log

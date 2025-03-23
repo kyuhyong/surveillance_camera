@@ -23,14 +23,6 @@ load_dotenv()
 app = Flask(__name__, static_folder='build')
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Queue to receive frames from `detector_service.py`
-frame_queue = multiprocessing.Queue(maxsize=10)
-notification_queue = multiprocessing.Queue(maxsize=5)
-
-# Start detector process
-detector_process = multiprocessing.Process(target=detector_service, args=(frame_queue, notification_queue))
-detector_process.start()
-
 # Suppress Flask's default HTTP request logs
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)  # Suppress non-critical logs
@@ -58,6 +50,10 @@ db = SQLAlchemy(app)
 mail = Mail(app)
 
 sendNotification = False # Notification state
+
+# Queue to receive frames from `detector_service.py`
+frame_queue = multiprocessing.Queue(maxsize=10)
+notification_queue = multiprocessing.Queue(maxsize=5)
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -290,7 +286,20 @@ def serve_frontend(path):
         return send_from_directory('build', path)
     return send_from_directory('build', 'index.html')
 
+# 로깅 설정
+logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+
 if __name__ == "__main__":
+
+
+    # Start detector process
+    detector_process = multiprocessing.Process(
+        target=detector_service, 
+        args=(frame_queue, notification_queue)
+    )
+    detector_process.start()
+    logging.info(f"Started detector process PID: {detector_process.pid}")
+
     with app.app_context():
         db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=False)
