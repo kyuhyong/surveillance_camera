@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from flask import Flask, request, jsonify, send_file, Response, session
+from flask import render_template_string, redirect, url_for     # For block IP
 from flask import send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail, Message
@@ -46,6 +47,9 @@ app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSKEY')
 app.default_sender = os.getenv('MAIL_USERNAME')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.secret_key = os.getenv('SECRET_KEY')
+
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///login_attempts.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 mail = Mail(app)
 
@@ -66,6 +70,42 @@ class Clip(db.Model):
     file_path = db.Column(db.String(200), nullable=False)
     date = db.Column(db.String(50), nullable=False)
     time = db.Column(db.String(50), nullable=False)
+
+
+
+ATTEMPT_LIMIT = 3
+BLOCK_DURATION_MINUTES = 5
+
+class LoginAttempt(db.Model):
+    __tablename__ = "login_attempts"
+    id = db.Column(db.Integer, primary_key=True)
+    ip_address = db.Column(db.String(45), unique=True, nullable=False)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    blocked_until = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<LoginAttempt {self.ip_address} {self.attempts} {self.blocked_until}>"
+
+def get_or_create_attempt(ip: str) -> LoginAttempt:
+    record = LoginAttempt.query.filter_by(ip_address=ip).first()
+    if not record:
+        record = LoginAttempt(ip_address=ip, attempts=0, blocked_until=None)
+        db.session.add(record)
+        db.session.commit()
+    return record
+
+def is_blocked(ip: str) -> bool:
+    record = LoginAttempt.query.filter_by(ip_address=ip).first()
+    if not record or not record.blocked_until:
+        return False
+    if datetime.utcnow() < record.blocked_until:
+        return True
+    # If block expired, reset
+    record.blocked_until = None
+    record.attempts = 0
+    db.session.commit()
+    return False
+
 
 # Thread to read notifications and broadcast to frontend
 def notify_frontend():
@@ -257,13 +297,32 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
+    import time
+    
+    # Check if this IP is blocked
+    ip = request.remote_addr
+    if is_blocked(ip):
+        return "Your IP is temporarily blocked due to too many failed attempts.", 403
+    
+    attempt_record = get_or_create_attempt(ip)
+
     data = request.json
     user = User.query.filter_by(username=data['username'], password=data['password']).first()
     username = data.get('username')
     if user:
         session['user'] = username # Store user in session
         session.permanent = True  # Ensures persistent session
+        # Successful login
+        attempt_record.attempts = 0
+        attempt_record.blocked_until = None
+        db.session.commit()
         return jsonify({"message": "Login successful", "status": "success"})
+    else :
+        # Failed login
+        attempt_record.attempts += 1
+        if attempt_record.attempts >= ATTEMPT_LIMIT:
+            attempt_record.blocked_until = datetime.utcnow() + timedelta(minutes=BLOCK_DURATION_MINUTES)
+        db.session.commit()
     return jsonify({"error": "Invalid credentials"}), 401
 
 @app.route('/api/logout', methods=['POST'])
