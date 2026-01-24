@@ -85,10 +85,11 @@ def check_motion(new_frame):
     prev_frame = gray
     return detect, int(round(np.mean(gray)))
 
-def detector_service(frame_queue, notification_queue):
+def detector_service(frame_queue, notification_queue, streaming_enabled_event):
     global is_recording, v_writer, recording_timer, \
         recorded_video_path, last_motion_check, isArmed, \
-        motion_count, brightness, motion_sensitivity, detection_ready_cnt, notifier
+        motion_count, brightness, motion_sensitivity, detection_ready_cnt, notifier, \
+        latest_frame_bytes
     notifier = notification_queue
     position = (10, 30)  # Position to place the text
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -97,68 +98,74 @@ def detector_service(frame_queue, notification_queue):
     thickness = 2
     camera.start()
     
-    while True:
-        # get frame from camera
-        frame = camera.get_frame()
-        if frame is not None:
-            motion_detected = False
+    try:
+        while True:
+            # get frame from camera
+            frame = camera.get_frame()
+            if frame is not None:
+                motion_detected = False
 
-            # Check for motion every 0.5 seconds
-            current_time = time.time()
-            if current_time - last_motion_check >= 0.5:
-                isArmed, motion_sensitivity = check_json()
-                motion_count, brightness = check_motion(frame)
-                # Check if image is bright enough to check detection
-                if brightness > BRIGHTNESS_THREASHOLD:
-                    if detection_ready_cnt > 2:
-                        if motion_count > motion_sensitivity:
-                            motion_detected = True
+                # Check for motion every 0.5 seconds
+                current_time = time.time()
+                if current_time - last_motion_check >= 0.5:
+                    isArmed, motion_sensitivity = check_json()
+                    motion_count, brightness = check_motion(frame)
+                    # Check if image is bright enough to check detection
+                    if brightness > BRIGHTNESS_THREASHOLD:
+                        if detection_ready_cnt > 2:
+                            if motion_count > motion_sensitivity:
+                                motion_detected = True
+                        else:
+                            detection_ready_cnt+=1
                     else:
-                        detection_ready_cnt+=1
-                else:
-                    # Image is too dark for detection so reset count
-                    detection_ready_cnt = 0
+                        # Image is too dark for detection so reset count
+                        detection_ready_cnt = 0
+                    
+                    last_motion_check = current_time
+
+                # Get the current time
+                current_time = datetime.now().strftime("%d/%m/%y, %H:%M:%S")
                 
-                last_motion_check = current_time
-
-            # Get the current time
-            current_time = datetime.now().strftime("%d/%m/%y, %H:%M:%S")
-            
-            # Overlay the text on the frame
-            cv2.putText(frame, current_time, position, font, font_scale, color, thickness)
-            
-            # Start recording when motion is detected
-            if motion_detected and isArmed:
-                if not is_recording:
-                    is_recording = True
-                    start_recording(frame)
-
-            # Record images to video
-            if is_recording and v_writer is not None:
-                try:
-                    v_writer.write(frame)
-                except Exception as e:
-                    print(f"❌ Error writing video: {e}")
-
-            # Stop recording if switching to DISARMED
-            if not isArmed and is_recording:
-                stop_recording()
+                # Overlay the text on the frame
+                cv2.putText(frame, current_time, position, font, font_scale, color, thickness)
                 
-            # Label onscreen message
-            txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") ) \
-                + " Motion: "+str(motion_count) \
-                + "("+str(motion_sensitivity)+")"
-            cv2.putText(frame, txt, (10, 60), font, font_scale, color, thickness)
-            txt = "Brightness:"+str(brightness)
-            cv2.putText(frame, txt, (10, 90), font, font_scale, color, thickness)
-            
-            # Encode frame for live streaming
-            #_, buffer = cv2.imencode('.jpg', frame)
-            #frame_bytes = buffer.tobytes()
+                # Start recording when motion is detected
+                if motion_detected and isArmed:
+                    if not is_recording:
+                        is_recording = True
+                        start_recording(frame)
 
-            # Add the latest frame to the queue (drop old frames if overloaded)
-            if not frame_queue.full():
-                frame_queue.put(frame.copy())
+                # Record images to video
+                if is_recording and v_writer is not None:
+                    try:
+                        v_writer.write(frame)
+                    except Exception as e:
+                        print(f"❌ Error writing video: {e}")
+
+                # Stop recording if switching to DISARMED
+                if not isArmed and is_recording:
+                    stop_recording()
+                    
+                # Label onscreen message
+                txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") ) \
+                    + " Motion: "+str(motion_count) \
+                    + "("+str(motion_sensitivity)+")"
+                cv2.putText(frame, txt, (10, 60), font, font_scale, color, thickness)
+                txt = "Brightness:"+str(brightness)
+                cv2.putText(frame, txt, (10, 90), font, font_scale, color, thickness)
+                
+                # Encode frame for live streaming
+                _, buffer = cv2.imencode('.jpg', frame)
+                frame_bytes = buffer.tobytes()
+                # If streaming is enabled, put frame into the queue
+                if streaming_enabled_event.is_set():
+                    # Add the latest frame to the queue (drop old frames if overloaded)
+                    if not frame_queue.full():
+                        frame_queue.put(frame.copy(), block=False)
+                time.sleep(0.05)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
 
 def save_first_frame(frame, timestamp):
     """Save the first detected frame as an image"""
@@ -269,5 +276,6 @@ signal.signal(signal.SIGTERM, cleanup)  # Handle termination
 if __name__ == "__main__":
     frame_queue = multiprocessing.Queue(maxsize=10)  # Shared frame queue
     notification_queue = multiprocessing.Queue(maxsize=5)
-    detector_process = multiprocessing.Process(target=detector_service, args=(frame_queue, notification_queue))
+    streaming_enabled_event = multiprocessing.Event()
+    detector_process = multiprocessing.Process(target=detector_service, args=(frame_queue, notification_queue, streaming_enabled_event))
     detector_process.start()

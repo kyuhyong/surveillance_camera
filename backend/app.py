@@ -17,6 +17,8 @@ import threading
 from state_manager import get_armed_status, set_armed_status, get_motion_sensitivity, set_motion_sensitivity
 import multiprocessing
 from detector_service import detector_service  # Import function from `detector_service.py`
+import requests
+import time
 
 load_dotenv()
 
@@ -56,8 +58,10 @@ mail = Mail(app)
 sendNotification = False # Notification state
 
 # Queue to receive frames from `detector_service.py`
-frame_queue = multiprocessing.Queue(maxsize=10)
-notification_queue = multiprocessing.Queue(maxsize=5)
+frame_queue = multiprocessing.Queue(maxsize=100)
+notification_queue = multiprocessing.Queue(maxsize=50)
+# Shared event flag
+streaming_enabled_event = multiprocessing.Event()
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -106,6 +110,42 @@ def is_blocked(ip: str) -> bool:
     db.session.commit()
     return False
 
+def start_detector_process():
+    """서브프로세스 실행 함수"""
+    process = multiprocessing.Process(
+        target=detector_service, 
+        args=(frame_queue, notification_queue, streaming_enabled_event)
+    )
+    process.start()
+    logging.info(f"Started detector process PID: {process.pid}")
+    return process
+
+def run_detector_process():
+    detector_process = start_detector_process()
+    #logging.info(f"Started detector process PID: {process.pid}")
+    try:
+        while True:
+            # 비정상 종료된 경우 자동 재시작
+            if not detector_process.is_alive():
+                logging.warning(f"Detector process PID: {detector_process.pid} exited with code {detector_process.exitcode}. Restarting...")
+                detector_process = start_detector_process()
+
+            # 주기적으로 데이터 추가 (테스트용)
+            #frame_queue.put("Sample Frame Data")
+            time.sleep(5)
+
+    except KeyboardInterrupt:
+        logging.warning("Main process interrupted. Terminating gracefully...")
+
+    finally:
+        # 종료 처리
+        if detector_process.is_alive():
+            detector_process.terminate()
+            detector_process.join()
+        logging.info(f"Detector process PID: {detector_process.pid} terminated.")
+
+# Start detector process thread
+threading.Thread(target=run_detector_process, daemon=True).start()
 
 # Thread to read notifications and broadcast to frontend
 def notify_frontend():
@@ -122,19 +162,33 @@ def notify_frontend():
 # Start background notification thread
 threading.Thread(target=notify_frontend, daemon=True).start()
 
+def clear_queue(q):
+    while not q.empty():
+        try:
+            q.get_nowait()
+        except Exception:
+            break
+
 @app.route('/api/video_stream')
 def video_stream():
+    clear_queue(frame_queue)
+    clear_queue(notification_queue)
+    streaming_enabled_event.set()
     # Get frame in the queue received from 'detector_service.py'
     def generate_video_stream():
         while True:
             try:
                 if not frame_queue.empty():
-                    frame = frame_queue.get()
-                    _, buffer = cv2.imencode('.jpg', frame)
-                    frame_bytes = buffer.tobytes()
+                   frame = frame_queue.get()
+                   _, buffer = cv2.imencode('.jpg', frame)
+                   frame_bytes = buffer.tobytes()
 
-                    yield (b'--frame\r\n'
-                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                   yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                else:
+                    # Yield a minimal keepalive so the connection doesn't close
+                    # Or at least sleep a bit to avoid CPU spinning
+                    time.sleep(0.1)
             except Exception as e:
                 print(f"❌ Error fetching frame from queue: {e}")
 
@@ -352,12 +406,12 @@ if __name__ == "__main__":
 
 
     # Start detector process
-    detector_process = multiprocessing.Process(
-        target=detector_service, 
-        args=(frame_queue, notification_queue)
-    )
-    detector_process.start()
-    logging.info(f"Started detector process PID: {detector_process.pid}")
+    #detector_process = multiprocessing.Process(
+    #    target=detector_service, 
+    #    args=(frame_queue, notification_queue)
+    #)
+    #detector_process.start()
+    #logging.info(f"Started detector process PID: {detector_process.pid}")
 
     with app.app_context():
         db.create_all()
