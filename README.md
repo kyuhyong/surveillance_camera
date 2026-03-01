@@ -1,70 +1,103 @@
-# Getting Started with Create React App
+# Surveillance Camera App
+
+This project is for making an autonomous surveilance system using any usb-camera, pi-camera on raspberry pi, jetson nano or any single board computer that can run python flask app, npm.
+
+## Features
+
+- Creating a user account with predefined registration code
+- Live view from the camera
+- User can Arm/Disarm motion detection
+- Automatic video recording for any detected motion
+- Auto removing recorded video after user defined period
+
+
+## Installation
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
-## Available Scripts
+1. Install `node v17` or later
+    - Raspberry pi with `uname -r` over `6.1.21-v8+` can install node v22 or later
+    - For jetson nano
+        - node v18 or later would not work due to libc version issue
+        - Install node using `nvm` is recommended 
+        ```
+        nvm install v17
+        nvm alias default v17
+        nvm use v17
+        ```
+        
+2. Install packages for backend
+    ```
+    cd backend/
+    pip3 install --upgrade pip setuptools wheel
+    pip3 install -r requirements.txt 
+    ```
+    For jetson nano, some packages may not work. So install specific versions
+    ```
+    pip3 uninstall flask-socketio python-socketio python-engineio -y
+    pip3 install flask-socketio==5.3.6
+    pip3 install python-socketio==5.8.0
+    pip3 install python-engineio==4.4.1
+    ```
+    
+3. Create `.env` files for `backend`
+    ```
+    MAIL_USERNAME=                # Your email
+    MAIL_PASSWORD=                # Your email password
+    SECRET_KEY=                   # Your Registraion Code
+    DATABASE_URL=sqlite:///surveillance.db
+    MAIL_PASSKEY=                 # Your email pass key
+    EXTERNAL_IP=                  # External IP address assigned to your router
+    ```
 
-In the project directory, you can run:
+4. Install packages for frontend
+    ```
+    cd frontend/
+    npm install
+    npm audit fix   # If required
+    npm install -g serve # install serve globally 
+    ```
 
-### `npm start`
+5. Create `.env` file for `frontend`
+    ```
+    REACT_APP_API_BASE_URL=http://IP_ADDRESS:5000
+    ```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Run app in terminal
 
-### `npm test`
+1. Open 2 terminals or ssh connection.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+2. In the first terminal, start frontend 
+    ```
+    cd frontend/
+    npm start
+    ```
 
-### `npm run build`
+3. In the second terminal, start backend app
+    ```
+    cd backend/
+    python3 app.y
+    ```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Start app as systemd service
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+1. Build frontend for serve (Make sure .env file exist)
+    ```
+    cd frontend/
+    npm run build
+    ```
+    
+2. try run `serve` to check if everything works
+    ```
+    serve -s build -l 3000
+    ```
+    
+3. Run `install_app.sh` to install `surveillance_app.service`
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+4. Start `surveillance_app.service`
+    ```
+    sudo systemctl daemon-reload
+    sudo systemctl start surveillance_app.service
+    ```
 
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)

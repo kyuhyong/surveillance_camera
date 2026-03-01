@@ -14,6 +14,7 @@ class Camera:
     def __init__(self, use_picamera=True):
         self.use_picamera = use_picamera
         self.stream = None
+        self.camera = None
 
         # Handle unavailable Picamera gracefully
         if self.use_picamera and not PICAMERA_AVAILABLE:
@@ -36,9 +37,14 @@ class Camera:
                 self.stream.set_controls({"FrameRate": 20})
                 self.stream.start()
             else:
-                print("Starting VideoStream...")
-                self.stream = VideoStream(src=0).start()
-                time.sleep(2.0)  # Warm-up time for webcam
+                try:
+                    #self.stream = VideoStream(src=0).start()
+                    self.camera = cv2.VideoCapture(0)
+                    print("Starting VideoStream...")
+                    time.sleep(2.0)  # Warm-up time for webcam
+                except AssertionError as e:
+                    print(e)
+                    return None
 
     def get_frame(self):
         try:
@@ -47,7 +53,9 @@ class Camera:
                 assert frame is not None and frame.size != 0
                 #frame = cv2.cvtColor(frame_in, cv2.COLOR_RGB2BGR)
             else:
-                frame = self.stream.read()
+                success, frame = self.camera.read()
+                #print(frame.shape)
+                #frame = self.stream.read()
                 assert frame is not None and frame.size != 0
             #_, jpeg = cv2.imencode('.jpg', frame)
             return frame
@@ -56,5 +64,8 @@ class Camera:
             return None
 
     def stop(self):
+        if self.camera:
+            self.camera.release()
         if self.stream:
             self.stream.stop()
+            

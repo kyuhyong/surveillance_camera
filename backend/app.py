@@ -49,7 +49,7 @@ app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSKEY')
 app.default_sender = os.getenv('MAIL_USERNAME')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.secret_key = os.getenv('SECRET_KEY')
-
+#print(f"SECRET KEY: {app.secret_key}")
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///login_attempts.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
@@ -285,9 +285,14 @@ def generate_rec_video_stream(video_path):
     print(f"🎬 Attempting to stream: {video_path}")
     try:
         with open(video_path, 'rb') as video_file:
-            while chunk := video_file.read(1024 * 1024):  # 1MB chunks
-                #print(f"📹 Streaming chunk of size: {len(chunk)} bytes")
+            while True:
+                chunk = video_file.read(1024 * 1024)
+                if not chunk:
+                    break
                 yield chunk
+            #while chunk := video_file.read(1024 * 1024):  # 1MB chunks
+                #print(f"📹 Streaming chunk of size: {len(chunk)} bytes")
+                #yield chunk
     except Exception as e:
         print(f"❌ Error streaming video: {e}")
 
