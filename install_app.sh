@@ -7,11 +7,19 @@ PROJECT_PATH="$(pwd)"
 USER_NAME="$(whoami)"
 HOME_DIR="$HOME"
 
+BACKEND_SERVICE_FILE="/etc/systemd/system/surveillance_backend.service"
+FRONTEND_SERVICE_FILE="/etc/systemd/system/surveillance_frontend.service"
+
 echo "Project path detected: $PROJECT_PATH"
 echo "User detected: $USER_NAME"
-
+read -p "[1/3] Is user name correct? (y/n): " USER_OK
+if [[ "$USER_OK" == "y" || "$USER_OK" == "Y" ]]; then
+    echo ""
+else
+    exit 1
+fi
 # Ask user about virtual environment
-read -p "Do you want to use a virtual environment? (y/n): " USE_VENV
+read -p "[2/3] Do you want to use a virtual environment? (y/n): " USE_VENV
 
 if [[ "$USE_VENV" == "y" || "$USE_VENV" == "Y" ]]; then
     read -p "Enter full path to your venv (example: /home/$USER_NAME/my-venv): " VENV_PATH
@@ -40,6 +48,22 @@ fi
 
 echo "Detected Node path: $NODE_PATH"
 
+# Ask for port number
+echo ""
+read -p "[3/3] Enter a PORT number for frontend: " PORT
+
+# Check if input contains only digits
+if ! [[ "$PORT" =~ ^[0-9]+$ ]]; then
+    echo "Error: PORT must contain only numbers."
+    exit 1
+fi
+
+# Check valid port range
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    echo "Error: PORT must be between 1 and 65535."
+    exit 1
+fi
+#####################################################
 # Create start_app.sh
 cat > "$PROJECT_PATH/start_app.sh" <<EOF
 #!/bin/bash
@@ -56,45 +80,80 @@ nohup $PYTHON_CMD app.py > backend.log 2>&1 &
 
 # Start React frontend
 cd $PROJECT_PATH/frontend || exit 1
-nohup serve -s build -l 3000 > frontend.log 2>&1 &
+nohup serve -s build -l $PORT > frontend.log 2>&1 &
 EOF
 
 chmod +x "$PROJECT_PATH/start_app.sh"
 
-echo "Created start_app.sh"
+echo "- Created $PROJECT_PATH/start_app.sh"
 
+#####################################################
 # Create systemd service
-SERVICE_FILE="/etc/systemd/system/surveillance_app.service"
 
-sudo bash -c "cat > $SERVICE_FILE" <<EOF
+sudo bash -c "cat > $BACKEND_SERVICE_FILE" <<EOF
 [Unit]
 Description=Flask and React Surveillance App
 After=network.target
 
 [Service]
+Type=simple
 User=$USER_NAME
-WorkingDirectory=$PROJECT_PATH
-ExecStartPre=/bin/bash -c 'echo "Starting Surveillance App at \$(date)" >> $HOME_DIR/startup.log'
-ExecStart=/bin/bash $PROJECT_PATH/start_app.sh
+WorkingDirectory=$PROJECT_PATH/backend
+
+ExecStart=/usr/bin/python3 $PROJECT_PATH/backend/app.py
+
 Restart=always
 RestartSec=5
-StartLimitInterval=0
-TimeoutStartSec=300
-Environment=PATH=$NODE_PATH:$VENV_PATH_EXPORT:/usr/local/bin:/usr/bin:/bin
-Environment=NVM_DIR=$HOME_DIR/.nvm
+
+StandardOutput=append:$HOME_DIR/backend.log
+StandardError=append:$HOME_DIR/backend_error.log
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-echo "Created surveillance_app.service"
+echo "- Created surveillance_app.service"
 
+#####################################################
+# Create frontend systemd service
+
+sudo bash -c "cat > $FRONTEND_SERVICE_FILE" <<EOF
+[Unit]
+Description=Flask and React Surveillance App
+After=network.target
+
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$PROJECT_PATH/frontend
+
+Environment=NVM_DIR=$HOME_DIR/.nvm
+Environment=PATH=$NODE_PATH:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=$NODE_PATH/serve -s build -l $PORT
+
+Restart=always
+RestartSec=5
+
+StandardOutput=append:$HOME_DIR/frontend.log
+StandardError=append:$HOME_DIR/frontend_error.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+echo "- Created surveillance_frontend.service"
+
+#####################################################
 # Reload and enable service
 sudo systemctl daemon-reload
-sudo systemctl enable surveillance_app.service
-
+sudo systemctl enable surveillance_backend.service
+sudo systemctl enable surveillance_frontend.service
+echo "-------------------------------------------"
 echo "Installation complete!"
 echo "Start the service with:"
-echo "  sudo systemctl start surveillance_app.service"
+echo "  sudo systemctl start surveillance_backend.service"
+echo "  sudo systemctl start surveillance_frontend.service"
 echo "Check status with:"
-echo "  sudo systemctl status surveillance_app.service"
+echo "  sudo systemctl status surveillance_backend.service"
+echo "  sudo systemctl status surveillance_frontend.service"
