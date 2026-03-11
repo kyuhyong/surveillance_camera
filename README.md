@@ -93,11 +93,12 @@ This project was bootstrapped with [Create React App](https://github.com/faceboo
     serve -s build -l 3000
     ```
     
-3. Run `install_app.sh` to install `surveillance_app.service`
+3. Run `install_app.sh` to install `surveillance_frontend.service` and `surveillance_backend.service` 
 
-4. Start `surveillance_app.service`
+4. Start fronend and backend separately
     ```
     sudo systemctl daemon-reload
-    sudo systemctl start surveillance_app.service
+    sudo systemctl start surveillance_frontend.service
+    sudo systemctl start surveillance_backend.service
     ```
 
