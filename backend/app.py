@@ -7,7 +7,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail, Message
 from flask_session import Session
 from flask_socketio import SocketIO, emit
-import logging, os, cv2, threading, time
+import logging, os, cv2, threading, time, queue
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -84,10 +84,14 @@ mail = Mail(app)
 sendNotification = False # Notification state
 
 # Queue to receive frames from `detector_service.py`
-frame_queue = multiprocessing.Queue(maxsize=100)
+# Holds encoded JPEG bytes; kept small so frames never pile up in memory
+frame_queue = multiprocessing.Queue(maxsize=2)
 notification_queue = multiprocessing.Queue(maxsize=50)
-# Shared event flag
+# Shared event flag: set while at least one client is watching the live stream
 streaming_enabled_event = multiprocessing.Event()
+# Updated by the detector on every good frame; used to detect a hung camera
+detector_heartbeat = multiprocessing.Value('d', 0.0)
+DETECTOR_STALL_TIMEOUT = 30  # seconds without a frame before restarting the detector
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -140,8 +144,9 @@ def start_detector_process():
     """서브프로세스 실행 함수"""
     process = multiprocessing.Process(
         target=detector_service, 
-        args=(frame_queue, notification_queue, streaming_enabled_event)
+        args=(frame_queue, notification_queue, streaming_enabled_event, detector_heartbeat)
     )
+    detector_heartbeat.value = time.time()  # startup grace period
     process.start()
     logging.info(f"Started detector process PID: {process.pid}")
     return process
@@ -154,6 +159,18 @@ def run_detector_process():
             # 비정상 종료된 경우 자동 재시작
             if not detector_process.is_alive():
                 logging.warning(f"Detector process PID: {detector_process.pid} exited with code {detector_process.exitcode}. Restarting...")
+                detector_process.join(timeout=1)
+                detector_process = start_detector_process()
+            elif time.time() - detector_heartbeat.value > DETECTOR_STALL_TIMEOUT:
+                # Process is alive but no frames (camera hung / disconnected)
+                logging.warning(f"Detector process PID: {detector_process.pid} stalled "
+                                f"(no frame for {DETECTOR_STALL_TIMEOUT}s). Restarting...")
+                detector_process.terminate()
+                detector_process.join(timeout=5)
+                if detector_process.is_alive():
+                    detector_process.kill()
+                    detector_process.join(timeout=5)
+                time.sleep(2)  # let the camera device be released
                 detector_process = start_detector_process()
 
             # 주기적으로 데이터 추가 (테스트용)
@@ -188,37 +205,82 @@ def notify_frontend():
 # Start background notification thread
 threading.Thread(target=notify_frontend, daemon=True).start()
 
-def clear_queue(q):
-    while not q.empty():
+# ---------------------------------------------------------------------------
+# Live stream
+# A single reader thread pulls JPEG frames from the detector and publishes the
+# latest one. Every viewer reads that shared frame, so multiple/stale clients
+# no longer steal frames from each other.
+# ---------------------------------------------------------------------------
+_frame_cond = threading.Condition()
+_latest_frame = None
+_frame_id = 0
+_viewer_lock = threading.Lock()
+_viewer_count = 0
+
+def frame_reader():
+    global _latest_frame, _frame_id
+    while True:
         try:
-            q.get_nowait()
-        except Exception:
-            break
+            data = frame_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        except Exception as e:
+            logging.warning(f"Frame reader error: {e}")
+            time.sleep(1)
+            continue
+        with _frame_cond:
+            _latest_frame = data
+            _frame_id += 1
+            _frame_cond.notify_all()
+
+threading.Thread(target=frame_reader, daemon=True).start()
+
+def _viewer_joined():
+    global _viewer_count
+    with _viewer_lock:
+        _viewer_count += 1
+        streaming_enabled_event.set()
+
+def _viewer_left():
+    global _viewer_count, _latest_frame
+    with _viewer_lock:
+        _viewer_count = max(0, _viewer_count - 1)
+        if _viewer_count == 0:
+            streaming_enabled_event.clear()
+            with _frame_cond:
+                _latest_frame = None  # don't show a stale frame to the next viewer
 
 @app.route('/api/video_stream')
 def video_stream():
-    clear_queue(frame_queue)
-    clear_queue(notification_queue)
-    streaming_enabled_event.set()
-    # Get frame in the queue received from 'detector_service.py'
     def generate_video_stream():
-        while True:
-            try:
-                if not frame_queue.empty():
-                   frame = frame_queue.get()
-                   _, buffer = cv2.imencode('.jpg', frame)
-                   frame_bytes = buffer.tobytes()
+        _viewer_joined()
+        try:
+            last_id = -1
+            last_sent = 0.0
+            while True:
+                with _frame_cond:
+                    _frame_cond.wait_for(lambda: _frame_id != last_id, timeout=1.0)
+                    fid, frame_bytes = _frame_id, _latest_frame
+                if frame_bytes is None:
+                    continue
+                now = time.time()
+                # Send new frames; if none arrive, resend the last one every second.
+                # The resend acts as a keepalive and makes a dead client connection
+                # raise an error, so this generator exits instead of leaking.
+                if fid == last_id and now - last_sent < 1.0:
+                    continue
+                last_id = fid
+                last_sent = now
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n'
+                       b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n'
+                       + frame_bytes + b'\r\n')
+        finally:
+            _viewer_left()
 
-                   yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                else:
-                    # Yield a minimal keepalive so the connection doesn't close
-                    # Or at least sleep a bit to avoid CPU spinning
-                    time.sleep(0.1)
-            except Exception as e:
-                print(f"❌ Error fetching frame from queue: {e}")
-
-    return Response(generate_video_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(generate_video_stream(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame',
+                    headers={'Cache-Control': 'no-cache, no-store, must-revalidate'})
 
 # Endpoint to get current settings
 @app.route('/api/get_settings', methods=['GET'])
@@ -286,36 +348,13 @@ def view_image(filename):
     except FileNotFoundError:
         abort(404, description="Image not found")
 
-# Serve Videos with Streaming Support
+# Serve Videos (send_file with conditional=True handles HTTP Range requests)
 @app.route('/api/video/<string:filename>')
 def view_video(filename):
-    video_path = os.path.join(config.STREAM_FOLDER, filename)
-
+    video_path = os.path.join(config.STREAM_FOLDER, os.path.basename(filename))
     if not os.path.exists(video_path):
         abort(404, description="Video file not found")
-
-    print(f"✅ Serving video: {video_path}")
-    
-    # Correct headers for video playback
-    return Response(
-        generate_rec_video_stream(video_path),
-        mimetype='video/mp4',
-        headers={
-            'Content-Disposition': f'inline; filename={filename}',  
-            'Accept-Ranges': 'bytes'
-        }
-    )
-
-# Efficient Video Streaming
-def generate_rec_video_stream(video_path):
-    print(f"🎬 Attempting to stream: {video_path}")
-    try:
-        with open(video_path, 'rb') as video_file:
-            while chunk := video_file.read(1024 * 1024):  # 1MB chunks
-                #print(f"📹 Streaming chunk of size: {len(chunk)} bytes")
-                yield chunk
-    except Exception as e:
-        print(f"❌ Error streaming video: {e}")
+    return send_file(video_path, mimetype='video/mp4', conditional=True)
 
 @app.route('/api/download_clip/<string:filename>')
 def download_clip(filename):

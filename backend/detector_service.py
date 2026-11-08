@@ -8,7 +8,7 @@ from camera import Camera
 import logging, os, signal, sys, cv2, threading, time, subprocess
 from datetime import datetime
 import multiprocessing
-import time
+import queue
 import config
 import threading
 from rpi_handler import RpiHandler
@@ -43,7 +43,10 @@ v_stream = None   # VideoStream
 camera = Camera(use_picamera=config.USE_PICAMERA)
 is_recording = False
 v_writer = None     # Video Writer
-recording_timer = None  # To track the timer object
+recording_timer = None  # Unused, kept for compatibility
+recording_end_time = 0.0  # time.time() at which the current recording stops
+recording_start_time = 0.0
+recording_frames = 0      # Frames actually written to the current clip
 recorded_video_path = ""
 sendNotification = False # Notification state
 rpi = RpiHandler()
@@ -54,8 +57,9 @@ def check_json():
         with open(ARMED_FILE, 'r') as f:
             state = json.load(f)
             return state["isArmed"], state["motion_sensitivity"]
-    except FileNotFoundError:
-        return False, 3
+    except (FileNotFoundError, ValueError, KeyError):
+        # File missing or half-written by the web process; keep last known values
+        return isArmed, motion_sensitivity
 
 # ============================== #
 #         Motion Detection       #
@@ -85,11 +89,11 @@ def check_motion(new_frame):
     prev_frame = gray
     return detect, int(round(np.mean(gray)))
 
-def detector_service(frame_queue, notification_queue, streaming_enabled_event):
+def detector_service(frame_queue, notification_queue, streaming_enabled_event, heartbeat=None):
     global is_recording, v_writer, recording_timer, \
         recorded_video_path, last_motion_check, isArmed, \
         motion_count, brightness, motion_sensitivity, detection_ready_cnt, notifier, \
-        latest_frame_bytes
+        recording_frames
     notifier = notification_queue
     position = (10, 30)  # Position to place the text
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -97,83 +101,114 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event):
     color = (0, 255, 0)  # Green color in BGR
     thickness = 2
     camera.start()
-    
+    if heartbeat is not None:
+        heartbeat.value = time.time()
+
     try:
         while True:
+            loop_start = time.time()
             # get frame from camera
             frame = camera.get_frame()
-            if frame is not None:
-                motion_detected = False
-
-                # Check for motion every 0.5 seconds
-                current_time = time.time()
-                if current_time - last_motion_check >= 0.5:
-                    isArmed, motion_sensitivity = check_json()
-                    motion_count, brightness = check_motion(frame)
-                    # Check if image is bright enough to check detection
-                    if brightness > BRIGHTNESS_THREASHOLD:
-                        if detection_ready_cnt > 2:
-                            if motion_count > motion_sensitivity:
-                                motion_detected = True
-                        else:
-                            detection_ready_cnt+=1
-                    else:
-                        # Image is too dark for detection so reset count
-                        detection_ready_cnt = 0
-                    
-                    last_motion_check = current_time
-
-                # Get the current time
-                current_time = datetime.now().strftime("%d/%m/%y, %H:%M:%S")
-                
-                # Overlay the text on the frame
-                cv2.putText(frame, current_time, position, font, font_scale, color, thickness)
-                
-                # Start recording when motion is detected
-                if motion_detected and isArmed:
-                    if not is_recording:
-                        is_recording = True
-                        start_recording(frame)
-
-                # Record images to video
-                if is_recording and v_writer is not None:
-                    try:
-                        v_writer.write(frame)
-                    except Exception as e:
-                        print(f"❌ Error writing video: {e}")
-
-                # Stop recording if switching to DISARMED
-                if not isArmed and is_recording:
-                    stop_recording()
-                    
-                # Label onscreen message
-                txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") ) \
-                    + " Motion: "+str(motion_count) \
-                    + "("+str(motion_sensitivity)+")"
-                cv2.putText(frame, txt, (10, 60), font, font_scale, color, thickness)
-                txt = "Brightness:"+str(brightness)
-                cv2.putText(frame, txt, (10, 90), font, font_scale, color, thickness)
-                
-                # Encode frame for live streaming
-                _, buffer = cv2.imencode('.jpg', frame)
-                frame_bytes = buffer.tobytes()
-                # If streaming is enabled, put frame into the queue
-                if streaming_enabled_event.is_set():
-                    # Add the latest frame to the queue (drop old frames if overloaded)
-                    if not frame_queue.full():
-                        frame_queue.put(frame.copy(), block=False)
+            if frame is None:
+                # Don't busy-spin when the camera returns nothing. If this persists,
+                # the heartbeat goes stale and the parent restarts this process.
                 time.sleep(0.05)
-    except Exception as e:
+                continue
+            if heartbeat is not None:
+                heartbeat.value = time.time()
+
+            motion_detected = False
+
+            # Check for motion every 0.5 seconds
+            current_time = time.time()
+            if current_time - last_motion_check >= 0.5:
+                isArmed, motion_sensitivity = check_json()
+                motion_count, brightness = check_motion(frame)
+                # Check if image is bright enough to check detection
+                if brightness > BRIGHTNESS_THREASHOLD:
+                    if detection_ready_cnt > 2:
+                        if motion_count > motion_sensitivity:
+                            motion_detected = True
+                    else:
+                        detection_ready_cnt+=1
+                else:
+                    # Image is too dark for detection so reset count
+                    detection_ready_cnt = 0
+
+                last_motion_check = current_time
+
+            # Overlay the current time on the frame
+            cv2.putText(frame, datetime.now().strftime("%d/%m/%y, %H:%M:%S"),
+                        position, font, font_scale, color, thickness)
+
+            # Start recording when motion is detected
+            if motion_detected and isArmed and not is_recording:
+                start_recording(frame)
+
+            # Record images to video
+            if is_recording and v_writer is not None:
+                try:
+                    v_writer.write(frame)
+                    recording_frames += 1
+                except Exception as e:
+                    print(f"❌ Error writing video: {e}")
+
+            # Stop recording after the configured duration or when DISARMED
+            if is_recording and (not isArmed or time.time() >= recording_end_time):
+                stop_recording()
+
+            # Label onscreen message
+            txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") ) \
+                + " Motion: "+str(motion_count) \
+                + "("+str(motion_sensitivity)+")"
+            cv2.putText(frame, txt, (10, 60), font, font_scale, color, thickness)
+            txt = "Brightness:"+str(brightness)
+            cv2.putText(frame, txt, (10, 90), font, font_scale, color, thickness)
+
+            # Send JPEG bytes (not raw frames) to the web process, only while
+            # someone is watching. Drop the oldest frame if the queue is full so
+            # the viewer always gets the most recent image.
+            if streaming_enabled_event.is_set():
+                ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ok:
+                    push_latest(frame_queue, buffer.tobytes())
+
+            # Pace the loop to TARGET_FPS (instead of a fixed sleep on top of processing time)
+            elapsed = time.time() - loop_start
+            if elapsed < FRAME_DELAY:
+                time.sleep(FRAME_DELAY - elapsed)
+    except Exception:
         import traceback
         traceback.print_exc()
+    finally:
+        if is_recording:
+            stop_recording()
+        camera.stop()
+
+def push_latest(q, item):
+    """Put item into q, discarding the oldest entry if q is full."""
+    try:
+        q.put_nowait(item)
+    except queue.Full:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            q.put_nowait(item)
+        except queue.Full:
+            pass
 
 def save_first_frame(frame, timestamp):
     """Save the first detected frame as an image"""
     image_path = os.path.join(config.IMAGES_FOLDER, f'image_{timestamp}.jpg')
     cv2.imwrite(image_path, frame)
 
+RECORD_FPS = float(config.TARGET_FPS)  # Nominal FPS written into the raw clip header
+
 def start_recording(frame):
-    global v_writer, recorded_video_path, recording_timer
+    global v_writer, recorded_video_path, is_recording, \
+        recording_end_time, recording_start_time, recording_frames
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     video_path = os.path.join(config.CLIPS_FOLDER, f'motion_{timestamp}.mp4')
     print(f"🎥 Motion detected : {video_path}")
@@ -181,63 +216,77 @@ def start_recording(frame):
     save_first_frame(frame, timestamp)
     #fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     fourcc = cv2.VideoWriter_fourcc(*'avc1')
-    v_writer = cv2.VideoWriter(video_path, fourcc, 20.0, (config.IMAGE_WIDTH, config.IMAGE_HEIGHT))
-    # Start a timer to stop recording after a set duration
-    if recording_timer:
-        recording_timer.cancel()  # Cancel any active timer
-    recording_timer = threading.Timer(config.DETECTION_DURATION, stop_recording)
-    recording_timer.start()
+    h, w = frame.shape[:2]
+    v_writer = cv2.VideoWriter(video_path, fourcc, RECORD_FPS, (w, h))
+    recording_start_time = time.time()
+    recording_end_time = recording_start_time + config.DETECTION_DURATION
+    recording_frames = 0
+    is_recording = True
 
 def stop_recording():
-    """Stop recording safely with proper resource cleanup"""
-    global is_recording, v_writer, recorded_video_path, notifier
-    if is_recording:
-        if v_writer is not None:   # Safely release the VideoWriter
-            v_writer.release()
-            v_writer = None
+    """Stop recording. Called only from the detector loop (no timer thread),
+    so the writer is never released while a frame is being written."""
+    global is_recording, v_writer, recorded_video_path
+    if not is_recording:
+        return
+    is_recording = False
+    if v_writer is not None:
+        v_writer.release()
+        v_writer = None
 
-        # Convert mp4 video to web-compatible format
-        filename = os.path.basename(recorded_video_path)
-        converted_path = os.path.join(config.STREAM_FOLDER, filename)
-        convert_to_web_compatible(recorded_video_path, converted_path)
-        is_recording = False
-        timestamp_str = '_'.join(filename.split('_')[1:3]).replace('.mp4','')
-        
-        # Format timestamp for display (e.g., "2025-03-11 23:46:30")
-        formatted_timestamp = timestamp_str.replace('_', ' ')
-        image_filename = filename.replace('.mp4','.jpg').replace('motion','image')
+    duration = time.time() - recording_start_time
+    actual_fps = recording_frames / duration if duration > 0 else RECORD_FPS
+    print(f"🛑 Stopping recording : {datetime.now()} "
+          f"({recording_frames} frames in {duration:.1f}s = {actual_fps:.1f} fps)")
 
-        print(f"🛑 Stopping recording : {datetime.now()}")
-        if notifier is not None:
-            notifier.put({"timestamp":formatted_timestamp, "image_filename": image_filename, "video_filename": filename})
+    # Convert in the background so the live view keeps running
+    threading.Thread(
+        target=finish_recording,
+        args=(recorded_video_path, actual_fps),
+        daemon=True
+    ).start()
 
-def convert_to_web_compatible(input_path, output_path):
-    """Converts recorded video to web-compatible `.mp4` format"""
+def finish_recording(raw_path, actual_fps):
+    filename = os.path.basename(raw_path)
+    converted_path = os.path.join(config.STREAM_FOLDER, filename)
+    convert_to_web_compatible(raw_path, converted_path, actual_fps)
+
+    timestamp_str = '_'.join(filename.split('_')[1:3]).replace('.mp4','')
+    # Format timestamp for display (e.g., "2025-03-11 23:46:30")
+    formatted_timestamp = timestamp_str.replace('_', ' ')
+    image_filename = filename.replace('.mp4','.jpg').replace('motion','image')
+    if notifier is not None:
+        try:
+            notifier.put_nowait({"timestamp":formatted_timestamp, "image_filename": image_filename, "video_filename": filename})
+        except queue.Full:
+            pass
+
+def convert_to_web_compatible(input_path, output_path, actual_fps=None):
+    """Converts recorded video to web-compatible `.mp4` format.
+
+    The raw clip is written with a nominal RECORD_FPS, but the Pi usually
+    captures fewer frames per second than that, which makes playback too fast.
+    Stretch the timestamps by RECORD_FPS / actual_fps so it plays in real time."""
+    cmd = ['ffmpeg', '-y', '-i', input_path]
+    if actual_fps and actual_fps > 0:
+        scale = RECORD_FPS / actual_fps
+        if abs(scale - 1.0) > 0.02:
+            cmd += ['-vf', f'setpts={scale:.4f}*PTS']
+    cmd += [
+        '-c:v', 'libx264',
+        '-crf', '23',
+        '-r', str(int(RECORD_FPS)),
+        '-vsync', '1',
+        '-an',
+        '-hide_banner', '-loglevel', 'error',
+        '-preset', 'ultrafast' if config.USE_PICAMERA else 'fast',
+        '-movflags', '+faststart',
+        output_path
+    ]
     try:
-        if config.USE_PICAMERA:
-            subprocess.run([
-                'ffmpeg', '-i', input_path,
-                '-c:v', 'libx264',
-                '-crf', '23',
-                '-r', '20',
-                '-vsync', '1',
-                '-hide_banner', '-loglevel','error',
-                '-preset', 'ultrafast',
-                '-movflags', '+faststart',
-                output_path
-            ], check=True)
-        else:
-            subprocess.run([
-                'ffmpeg', '-i', input_path,
-                '-c:v', 'libx264',
-                '-crf', '23',
-                '-hide_banner', '-loglevel','error',
-                '-preset', 'fast',
-                '-movflags', '+faststart',
-                output_path
-            ], check=True)
+        subprocess.run(cmd, check=True)
         print(f"✅ Conversion successful: {output_path}")
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         print(f"❌ Conversion failed: {e}")
 
 # Auto-delete function
@@ -245,22 +294,25 @@ def auto_delete_old_clips():
     print(f"AUTO DELETE STARTED!")
     while True:
         now = datetime.now()
-        for filename in os.listdir(config.CLIPS_FOLDER):
-            file_path = os.path.join(config.CLIPS_FOLDER, filename)
-            if os.path.isfile(file_path):
-                # Extract the date from the filename
-                try:                  
+        for folder in (config.CLIPS_FOLDER, config.STREAM_FOLDER, config.IMAGES_FOLDER):
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                if not os.path.isfile(file_path):
+                    continue
+                # Extract the date from the filename (motion_/image_YYYY-mm-dd_HH-MM-SS.ext)
+                try:
                     date_str = '_'.join(filename.split('_')[1:3]).split('.')[0]
                     file_date = datetime.strptime(date_str, "%Y-%m-%d_%H-%M-%S")
-                    # Calculate file age
                     if (now - file_date).days > config.RETENTION_DAYS:
                         os.remove(file_path)
-                        print(f"🗑️ Deleted old clip: {filename}")
+                        print(f"🗑️ Deleted old file: {file_path}")
                 except (IndexError, ValueError):
                     print(f"❗ Invalid filename format: {filename}")
-        
-        # Check for old files every 24 hours
-        time.sleep(24 * 3600)  # 86400 seconds = 1 day
+                except OSError as e:
+                    print(f"❗ Could not delete {file_path}: {e}")
+
+        # Check for old files every hour
+        time.sleep(3600)
 
 # Start the auto-delete function in a separate thread
 threading.Thread(target=auto_delete_old_clips, daemon=True).start()
