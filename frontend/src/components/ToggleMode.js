@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FaCog } from 'react-icons/fa'; // Gear Icon
+import { API_BASE_URL } from '../config';
 
 export default function ToggleMode() {
     const [showSettings, setShowSettings] = useState(false); // State for expanded panel
@@ -11,7 +12,7 @@ export default function ToggleMode() {
     useEffect(() => {
         const loadSettings = async () => {
             try {
-                const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/get_settings`);
+                const response = await fetch(`${API_BASE_URL}/api/get_settings`);
                 const data = await response.json();
 
                 setIsArmed(data.isArmed);
@@ -28,7 +29,7 @@ export default function ToggleMode() {
         const newState = !isArmed;
         setIsArmed(newState);
 
-        await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/toggle_mode`, {
+        await fetch(`${API_BASE_URL}/api/toggle_mode`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ isArmed: newState })
@@ -39,7 +40,7 @@ export default function ToggleMode() {
         const newSensitivity = Number(event.target.value);
         setSensitivity(newSensitivity);
 
-        await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/set_sensitivity`, {
+        await fetch(`${API_BASE_URL}/api/set_sensitivity`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sensitivity: newSensitivity })
@@ -50,7 +51,7 @@ export default function ToggleMode() {
         const newNotificationState = !sendNotification;
         setSendNotification(newNotificationState);
 
-        await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/set_notification`, {
+        await fetch(`${API_BASE_URL}/api/set_notification`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sendNotification: newNotificationState })

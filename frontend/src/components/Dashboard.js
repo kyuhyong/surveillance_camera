@@ -4,15 +4,29 @@ import LiveStream from './LiveStream';
 import ToggleMode from './ToggleMode';
 import ClipsList from './ClipsList';
 import { FaSignOutAlt } from 'react-icons/fa';  // Import Logout Icon
+import { API_BASE_URL } from '../config';
 
 export default function Dashboard() {
     const navigate = useNavigate();
 
     const handleLogout = async () => {
-        await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/logout`, { method: 'POST' });
-        localStorage.removeItem('isLoggedIn');  // Clear session in frontend
-        alert('Logged out successfully!');
-        navigate('/login');  // Redirect to login page
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/logout`, {
+                method: "POST",
+                credentials: "include"
+             });
+            const data = await res.json();
+            if (res.ok) {
+                localStorage.removeItem("isLoggedIn");
+                alert(data.message || "Logged out successfully!");
+                navigate("/login");
+            } else {
+                alert(data.error || "Logout failed");
+            }
+        } catch (err) {
+            console.error("Logout error:", err);
+            alert("Network error: Could not logout");
+        }
     };
     return (
         <div style={styles.container}>

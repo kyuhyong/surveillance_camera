@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { FaTrash } from 'react-icons/fa';  // Import trash icon
 import { FaDownload } from 'react-icons/fa';  // Import download icon
 import { io } from 'socket.io-client';
+import { API_BASE_URL } from '../config';
 
 export default function ClipsList() {
     const [clips, setClips] = useState([]);
     const [selectedVideo, setSelectedVideo] = useState(null);  // Video selected for playback
 
     useEffect(() => {
-        fetch(`${process.env.REACT_APP_API_BASE_URL}/api/clips`)
+        fetch(`${API_BASE_URL}/api/clips`)
             .then(res => res.json())
             .then(setClips)
             .catch(error => console.error('Error fetching clips:', error));
@@ -24,7 +25,7 @@ export default function ClipsList() {
     // Group clips by date and time
     const groupByDate = (clips) => {
         const grouped = clips.reduce((acc, clip) => {
-            const [date, time] = clip.timestamp.split(' '); // Extract date only
+            const [date] = clip.timestamp.split(' '); // Extract date only
             if (!acc[date]) {
                 acc[date] = [];
             }
@@ -55,12 +56,12 @@ export default function ClipsList() {
     const groupedClips = groupByDate(clips);
 
     const handleDelete = async (filename) => {
-        await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/delete_clip/${filename}`, { method: 'DELETE' });
+        await fetch(`${API_BASE_URL}/api/delete_clip/${filename}`, { method: 'DELETE' });
         setClips(clips.filter(clip => clip.video_filename !== filename));
     };
     // Download Handler
     const handleDownload = (filename) => {
-        const downloadUrl = `${process.env.REACT_APP_API_BASE_URL}/api/download_clip/${filename}`;
+        const downloadUrl = `${API_BASE_URL}/api/download_clip/${filename}`;
         const link = document.createElement('a');
         link.href = downloadUrl;
         link.download = filename; // Ensures the proper filename is set
@@ -91,8 +92,8 @@ export default function ClipsList() {
                             </div>
                             {/* Thumbnail Image */}
                             <img
-                                src={`${process.env.REACT_APP_API_BASE_URL}/api/image/${clip.image_filename}`}
-                                alt="Captured Image"
+                                src={`${API_BASE_URL}/api/image/${clip.image_filename}`}
+                                alt="Captured frame"
                                 style={styles.imagePreview}
                                 onClick={() => handleImageClick(clip.video_filename)}
                                 //onClick={() => setSelectedVideo(clip.video_filename)}  // Click image to play video
@@ -101,7 +102,7 @@ export default function ClipsList() {
                             {selectedVideo === clip.video_filename && (
                                 <video controls width="320" height="240" autoPlay>
                                     <source
-                                        src={`${process.env.REACT_APP_API_BASE_URL}/api/video/${clip.video_filename}`}
+                                        src={`${API_BASE_URL}/api/video/${clip.video_filename}`}
                                         type="video/mp4"
                                     />
                                     Your browser does not support the video tag.

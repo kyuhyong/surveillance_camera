@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from '../config';
 
 export default function LoginForm({ onLoginSuccess }) {
     const [username, setUsername] = useState('');
@@ -11,7 +12,8 @@ export default function LoginForm({ onLoginSuccess }) {
         e.preventDefault();  // Prevents page reload
 
         try {
-            const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/login`, {
+            console.log('Base url:', API_BASE_URL);
+            const response = await fetch(`${API_BASE_URL}/api/user_login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
@@ -67,7 +69,7 @@ export default function LoginForm({ onLoginSuccess }) {
                 </button>
                 {/* Registration Button Added */}
                 <p>Don't have an account?</p>
-                <button type="submit" onClick={handleRegister}>Register</button>
+                <button type="button" onClick={handleRegister}>Register</button>
                 
             </form>
         </div>

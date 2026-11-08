@@ -8,28 +8,23 @@ import Dashboard from './components/Dashboard';
 function App() {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
 
+    // Check login status on app load
     useEffect(() => {
-        // Check session in localStorage
-        const isLoggedInStored = localStorage.getItem('isLoggedIn');
-        if (isLoggedInStored === 'true') {
-            setIsLoggedIn(true);
-        } else {
-            setIsLoggedIn(false);
-        }
+        setIsLoggedIn(localStorage.getItem('isLoggedIn') === 'true');
     }, []);
 
     return (
-        <Router>
-            <Routes>
-                <Route path="/login" element={<LoginForm onLoginSuccess={() => setIsLoggedIn(true)} />} />
-                <Route path="/register" element={<RegisterForm />} />
-                <Route
-                    path="/dashboard"
-                    element={isLoggedIn ? <Dashboard /> : <LoginForm onLoginSuccess={() => setIsLoggedIn(true)} />}
-                />
-                <Route path="*" element={<LoginForm onLoginSuccess={() => setIsLoggedIn(true)} />} />
-            </Routes>
-        </Router>
+      <Router>
+        <Routes>
+          <Route path="/" element={<LoginForm onLoginSuccess={() => setIsLoggedIn(true)} />} />
+          <Route path="/login" element={<LoginForm onLoginSuccess={() => setIsLoggedIn(true)} />} />
+          <Route path="/register" element={<RegisterForm />} />
+          <Route
+              path="/dashboard"
+              element={isLoggedIn ? <Dashboard /> : <LoginForm onLoginSuccess={() => setIsLoggedIn(true)} />}
+          />
+        </Routes>
+      </Router>
     );
 }
 

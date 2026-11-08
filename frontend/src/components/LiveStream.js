@@ -1,11 +1,12 @@
 import React from 'react';
+import { API_BASE_URL } from '../config';
 
 export default function LiveStream() {
     return (
         <div style={styles.container}>
             {/*<h3>Live Video Stream</h3>*/}
             <img
-                src={`${process.env.REACT_APP_API_BASE_URL}/api/video_stream`}
+                src={`${API_BASE_URL}/api/video_stream`}
                 alt="Live Stream"
                 style={{ width: '100%', height: 'auto', border: '2px solid #4CAF50' }}
             />

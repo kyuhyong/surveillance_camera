@@ -8,7 +8,7 @@ from flask_mail import Mail, Message
 from flask_session import Session
 from flask_socketio import SocketIO, emit
 import logging, os, cv2, threading, time
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask_cors import CORS
 import config
@@ -23,36 +23,62 @@ import time
 load_dotenv()
 
 # Initialize Flask app and SocketIO
-app = Flask(__name__, static_folder='build')
-socketio = SocketIO(app, cors_allowed_origins="*")
+app = Flask(__name__, static_folder="build")
 
 # Suppress Flask's default HTTP request logs
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)  # Suppress non-critical logs
+log = logging.getLogger("werkzeug")
+log.setLevel(logging.ERROR)
 
-# Flask Session Configuration
-app.secret_key = 'super-secret-key'  # Required for session security
-app.config['SESSION_TYPE'] = 'filesystem'  # Store session data on the server
-app.config['SESSION_PERMANENT'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # Session expiry in seconds (e.g., 1 hour)
-Session(app)  # Initialize Flask-Session
-external_ip = os.getenv('EXTERNAL_IP')
+# Secret key (SET ONCE)
+app.secret_key = os.getenv("SECRET_KEY", "super-secret-key")
+
+external_ip = os.getenv("EXTERNAL_IP")
 print(f"External IP: {external_ip}")
-CORS(app)
-#CORS(app, origins=['http://'+external_ip+':3000'])
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
-app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSKEY')
-app.default_sender = os.getenv('MAIL_USERNAME')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-app.secret_key = os.getenv('SECRET_KEY')
 
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///login_attempts.db"
+allowed_origins = ["http://localhost:3000"]
+if external_ip:
+    allowed_origins.append(f"http://{external_ip}:3000")
+
+from flask_cors import CORS
+CORS(
+    app,
+    supports_credentials=True,
+    origins=allowed_origins
+)
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=allowed_origins,
+    manage_session=False
+)
+
+# Session config
+app.config.update(
+    SESSION_TYPE="filesystem",
+    SESSION_PERMANENT=True,
+    PERMANENT_SESSION_LIFETIME=3600,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False
+)
+
+Session(app)
+
+# Database (ONE source of truth)
+app.config["SQLALCHEMY_DATABASE_URI"] = (
+    os.getenv("DATABASE_URL") or "sqlite:///login_attempts.db"
+)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
 db = SQLAlchemy(app)
+
+# Mail
+app.config.update(
+    MAIL_SERVER="smtp.gmail.com",
+    MAIL_PORT=587,
+    MAIL_USE_TLS=True,
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSKEY")
+)
 mail = Mail(app)
 
 sendNotification = False # Notification state
@@ -349,14 +375,14 @@ def register():
         return jsonify({"error": f"Email sending failed: {str(e)}"}), 500
     #return jsonify({"message": "Registration successful! Please verify your email."})
 
-@app.route('/api/login', methods=['POST'])
+@app.route('/api/user_login', methods=['POST'])
 def login():
     import time
     
     # Check if this IP is blocked
     ip = request.remote_addr
     if is_blocked(ip):
-        return "Your IP is temporarily blocked due to too many failed attempts.", 403
+        return jsonify({"error": "Your IP is temporarily blocked due to too many failed attempts."}), 403
     
     attempt_record = get_or_create_attempt(ip)
 
@@ -381,6 +407,7 @@ def login():
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
+    print("🔒 User logged out")
     """User Logout Endpoint"""
     session.pop('user', None)
     return jsonify({"message": "Logout successful", "status": "success"})
@@ -399,6 +426,10 @@ def serve_frontend(path):
         return send_from_directory('build', path)
     return send_from_directory('build', 'index.html')
 
+@app.route("/ping")
+def ping():
+    return {"ok": True}
+
 # 로깅 설정
 logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -415,4 +446,10 @@ if __name__ == "__main__":
 
     with app.app_context():
         db.create_all()
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    #app.run(host='0.0.0.0', port=5000, debug=False) #Do not use app.run
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=5000,
+        debug=False
+    )
