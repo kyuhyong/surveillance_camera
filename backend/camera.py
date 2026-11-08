@@ -57,4 +57,12 @@ class Camera:
 
     def stop(self):
         if self.stream:
-            self.stream.stop()
+            try:
+                self.stream.stop()
+                # Picamera2 must also be closed, otherwise the next process
+                # (e.g. after a watchdog restart) can't acquire the camera.
+                if self.use_picamera and hasattr(self.stream, "close"):
+                    self.stream.close()
+            except Exception as e:
+                print(f"Camera stop error: {e}")
+            self.stream = None
