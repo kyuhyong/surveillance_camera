@@ -490,5 +490,9 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0",
         port=5000,
-        debug=False
+        debug=False,
+        # Flask-SocketIO refuses to start Werkzeug when there is no terminal
+        # (e.g. under systemd). Werkzeug's threaded server is fine for a
+        # single-camera LAN app.
+        allow_unsafe_werkzeug=True
     )
