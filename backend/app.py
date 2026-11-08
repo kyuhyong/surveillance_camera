@@ -144,7 +144,10 @@ def start_detector_process():
     """서브프로세스 실행 함수"""
     process = multiprocessing.Process(
         target=detector_service, 
-        args=(frame_queue, notification_queue, streaming_enabled_event, detector_heartbeat)
+        args=(frame_queue, notification_queue, streaming_enabled_event, detector_heartbeat),
+        # Daemon: if the web server dies, the main process exits immediately and
+        # systemd restarts everything, instead of hanging while waiting on the child.
+        daemon=True
     )
     detector_heartbeat.value = time.time()  # startup grace period
     process.start()
