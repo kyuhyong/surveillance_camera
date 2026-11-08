@@ -100,9 +100,15 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event, h
     font_scale = 1
     color = (0, 255, 0)  # Green color in BGR
     thickness = 2
+    signal.signal(signal.SIGINT, cleanup)   # Handle Ctrl+C
+    signal.signal(signal.SIGTERM, cleanup)  # Handle terminate() from the supervisor
+    print(f"📷 Detector PID {os.getpid()} starting camera...", flush=True)
     camera.start()
+    print("📷 Camera started, waiting for frames", flush=True)
     if heartbeat is not None:
         heartbeat.value = time.time()
+    got_first_frame = False
+    empty_frames = 0
 
     try:
         while True:
@@ -112,8 +118,14 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event, h
             if frame is None:
                 # Don't busy-spin when the camera returns nothing. If this persists,
                 # the heartbeat goes stale and the parent restarts this process.
+                empty_frames += 1
+                if empty_frames % 100 == 1:
+                    print(f"⚠️ Camera returned no frame ({empty_frames} times)", flush=True)
                 time.sleep(0.05)
                 continue
+            if not got_first_frame:
+                got_first_frame = True
+                print(f"✅ First frame received: {frame.shape}", flush=True)
             if heartbeat is not None:
                 heartbeat.value = time.time()
 
@@ -317,13 +329,11 @@ def auto_delete_old_clips():
 # Start the auto-delete function in a separate thread
 threading.Thread(target=auto_delete_old_clips, daemon=True).start()
 
-# Cleanup on App Termination
+# Cleanup on termination. Installed only inside the detector process: in the
+# web process, calling sys.exit() from a signal handler while OpenCV/werkzeug
+# threads are running caused a segfault on `systemctl stop`.
 def cleanup(signum, frame):
-    camera.stop()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, cleanup)   # Handle Ctrl+C
-signal.signal(signal.SIGTERM, cleanup)  # Handle termination
+    sys.exit(0)  # raises SystemExit in the loop; its `finally` stops the camera
 
 if __name__ == "__main__":
     frame_queue = multiprocessing.Queue(maxsize=10)  # Shared frame queue

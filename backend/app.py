@@ -22,8 +22,17 @@ import time
 
 load_dotenv()
 
-# Initialize Flask app and SocketIO
-app = Flask(__name__, static_folder="build")
+# Frontend build served by Flask. Prefer the fresh `npm run build` output in
+# frontend/build; fall back to the old backend/build copy if that's all there is.
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_BUILD_DIR = os.path.join(BACKEND_DIR, '..', 'frontend', 'build')
+if not os.path.isdir(FRONTEND_BUILD_DIR):
+    FRONTEND_BUILD_DIR = os.path.join(BACKEND_DIR, 'build')
+FRONTEND_BUILD_DIR = os.path.abspath(FRONTEND_BUILD_DIR)
+print(f"Serving frontend from: {FRONTEND_BUILD_DIR}")
+
+# Initialize Flask app and SocketIO (static files are served by serve_frontend)
+app = Flask(__name__, static_folder=None)
 
 # Suppress Flask's default HTTP request logs
 log = logging.getLogger("werkzeug")
@@ -32,12 +41,29 @@ log.setLevel(logging.ERROR)
 # Secret key (SET ONCE)
 app.secret_key = os.getenv("SECRET_KEY", "super-secret-key")
 
-external_ip = os.getenv("EXTERNAL_IP")
-print(f"External IP: {external_ip}")
+def detect_lan_ip():
+    """Best-effort LAN IP of this machine (no packets are actually sent)."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return None
 
-allowed_origins = ["http://localhost:3000"]
-if external_ip:
-    allowed_origins.append(f"http://{external_ip}:3000")
+external_ip = os.getenv("EXTERNAL_IP")  # optional: public IP / DNS name used from outside
+lan_ip = detect_lan_ip()
+print(f"External IP: {external_ip}, LAN IP: {lan_ip}")
+
+# Origins allowed to call the API / socket.io from a browser. Covers the page
+# being served by Flask itself (:5000) and the React dev server / `serve` (:3000).
+import socket as _socket
+_hosts = {"localhost", "127.0.0.1", _socket.gethostname(), f"{_socket.gethostname()}.local"}
+for _h in (external_ip, lan_ip):
+    if _h:
+        _hosts.add(_h)
+allowed_origins = [f"http://{h}:{port}" for h in sorted(_hosts) for port in (3000, 5000)]
+print(f"Allowed origins: {allowed_origins}")
 
 from flask_cors import CORS
 CORS(
@@ -90,7 +116,9 @@ notification_queue = multiprocessing.Queue(maxsize=50)
 # Shared event flag: set while at least one client is watching the live stream
 streaming_enabled_event = multiprocessing.Event()
 # Updated by the detector on every good frame; used to detect a hung camera
-detector_heartbeat = multiprocessing.Value('d', 0.0)
+# lock=False: the detector may be killed at any moment; a lock held by a killed
+# process would deadlock the next detector and the supervisor.
+detector_heartbeat = multiprocessing.Value('d', 0.0, lock=False)
 DETECTOR_STALL_TIMEOUT = 30  # seconds without a frame before restarting the detector
 
 class User(db.Model):
@@ -464,9 +492,12 @@ def check_session():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
-    if path != "" and os.path.exists(f"build/{path}"):
-        return send_from_directory('build', path)
-    return send_from_directory('build', 'index.html')
+    if path and os.path.isfile(os.path.join(FRONTEND_BUILD_DIR, path)):
+        return send_from_directory(FRONTEND_BUILD_DIR, path)
+    # index.html must not be cached, otherwise browsers keep loading an old build
+    response = send_from_directory(FRONTEND_BUILD_DIR, 'index.html')
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 @app.route("/ping")
 def ping():

@@ -14,7 +14,7 @@ export default function ClipsList() {
             .then(setClips)
             .catch(error => console.error('Error fetching clips:', error));
         // Connect to WebSocket for real-time updates
-        const socket = io(process.env.REACT_APP_API_BASE_URL);
+        const socket = io(API_BASE_URL || undefined); // undefined = same origin
         socket.on('new_clip', (newClip) => {
             setClips((prevClips) => [newClip, ...prevClips]); // Add new clips at the top
         });
