@@ -22,6 +22,8 @@ TARGET_FPS = 20  # Change this value for slower frame rates
 IMAGE_WIDTH = 640
 IMAGE_HEIGHT = 480
 DETECTION_DURATION = 5
+# Hard cap (seconds) for a clip that keeps getting extended by continuous motion
+MAX_RECORDING_DURATION = 300
 RETENTION_DAYS = 7
 CLIPS_FOLDER = 'recorded_clips'
 STREAM_FOLDER = 'stream_clips'

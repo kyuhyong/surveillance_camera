@@ -7,6 +7,7 @@ export default function ToggleMode() {
     const [isArmed, setIsArmed] = useState(false);
     const [sendNotification, setSendNotification] = useState(false);
     const [sensitivity, setSensitivity] = useState(3);  // Default sensitivity level
+    const [duration, setDuration] = useState(5);  // Recording length in seconds
 
     // Load settings on initial page load
     useEffect(() => {
@@ -17,6 +18,7 @@ export default function ToggleMode() {
 
                 setIsArmed(data.isArmed);
                 setSensitivity(data.motion_sensitivity);
+                if (data.detection_duration) setDuration(data.detection_duration);
             } catch (error) {
                 console.error('Error fetching settings:', error);
             }
@@ -44,6 +46,18 @@ export default function ToggleMode() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sensitivity: newSensitivity })
+        });
+    };
+    // Change Recording Duration: update the label while dragging,
+    // save once the slider is released
+    const handleDurationChange = (event) => {
+        setDuration(Number(event.target.value));
+    };
+    const saveDuration = async (event) => {
+        await fetch(`${API_BASE_URL}/api/set_detection_duration`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ duration: Number(event.target.value) })
         });
     };
     // Toggle Notification Checkbox
@@ -108,6 +122,23 @@ export default function ToggleMode() {
                             style={styles.slider}
                         />
                         <span>{sensitivity}</span>
+                    </div>
+                    {/* Recording Duration Slider */}
+                    <div style={styles.sliderContainer}>
+                        <label htmlFor="duration">Recording Duration :</label>
+                        <input
+                            type="range"
+                            id="duration"
+                            min="5"
+                            max="30"
+                            step="1"
+                            value={duration}
+                            onChange={handleDurationChange}
+                            onPointerUp={saveDuration}
+                            onKeyUp={saveDuration}
+                            style={styles.slider}
+                        />
+                        <span>{duration}s</span>
                     </div>
                 </div>
             )}

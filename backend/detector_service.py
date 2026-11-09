@@ -12,6 +12,7 @@ import queue
 import config
 import threading
 from rpi_handler import RpiHandler
+from state_manager import clamp_detection_duration
 
 ARMED_FILE = 'system_state.json'
 
@@ -28,6 +29,8 @@ FRAME_DELAY = 1.0 / config.TARGET_FPS  # Delay to match target FPS
 print(f"FPS={config.TARGET_FPS}, DELAY={FRAME_DELAY}")
 # Brightness threashold for ready to detect motion
 BRIGHTNESS_THREASHOLD = 50
+# Motion is checked every 0.5s; treat motion as ongoing if seen within this window
+MOTION_GRACE_PERIOD = 1.5
 
 # Motion detection variables
 isArmed = False     # Global state to manage ARM/DISARM mode
@@ -38,6 +41,7 @@ motion_count = 0
 brightness = 0
 brightness_prev = 0
 motion_sensitivity = 3
+detection_duration = config.DETECTION_DURATION  # Recording length (s), set from the UI
 
 v_stream = None   # VideoStream
 camera = Camera(use_picamera=config.USE_PICAMERA)
@@ -56,10 +60,12 @@ def check_json():
     try:
         with open(ARMED_FILE, 'r') as f:
             state = json.load(f)
-            return state["isArmed"], state["motion_sensitivity"]
+            duration = clamp_detection_duration(
+                state.get("detection_duration", config.DETECTION_DURATION))
+            return state["isArmed"], state["motion_sensitivity"], duration
     except (FileNotFoundError, ValueError, KeyError):
         # File missing or half-written by the web process; keep last known values
-        return isArmed, motion_sensitivity
+        return isArmed, motion_sensitivity, detection_duration
 
 # ============================== #
 #         Motion Detection       #
@@ -93,7 +99,7 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event, h
     global is_recording, v_writer, recording_timer, \
         recorded_video_path, last_motion_check, isArmed, \
         motion_count, brightness, motion_sensitivity, detection_ready_cnt, notifier, \
-        recording_frames
+        recording_frames, detection_duration
     notifier = notification_queue
     position = (10, 30)  # Position to place the text
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -109,6 +115,7 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event, h
         heartbeat.value = time.time()
     got_first_frame = False
     empty_frames = 0
+    last_motion_time = 0.0  # time.time() of the most recent motion detection
 
     try:
         while True:
@@ -134,7 +141,7 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event, h
             # Check for motion every 0.5 seconds
             current_time = time.time()
             if current_time - last_motion_check >= 0.5:
-                isArmed, motion_sensitivity = check_json()
+                isArmed, motion_sensitivity, detection_duration = check_json()
                 motion_count, brightness = check_motion(frame)
                 # Check if image is bright enough to check detection
                 if brightness > BRIGHTNESS_THREASHOLD:
@@ -165,9 +172,19 @@ def detector_service(frame_queue, notification_queue, streaming_enabled_event, h
                 except Exception as e:
                     print(f"❌ Error writing video: {e}")
 
-            # Stop recording after the configured duration or when DISARMED
-            if is_recording and (not isArmed or time.time() >= recording_end_time):
-                stop_recording()
+            if motion_detected:
+                last_motion_time = current_time
+
+            # Stop recording when DISARMED, or once the configured duration is up
+            # and no motion has been seen for MOTION_GRACE_PERIOD seconds (keep
+            # recording while motion continues, up to MAX_RECORDING_DURATION).
+            if is_recording:
+                now = time.time()
+                motion_ongoing = now - last_motion_time < MOTION_GRACE_PERIOD
+                if (not isArmed
+                        or (now >= recording_end_time and not motion_ongoing)
+                        or now - recording_start_time >= config.MAX_RECORDING_DURATION):
+                    stop_recording()
 
             # Label onscreen message
             txt = ("REC " if is_recording else ("ARMED" if isArmed else "DISARMED") ) \
@@ -231,7 +248,7 @@ def start_recording(frame):
     h, w = frame.shape[:2]
     v_writer = cv2.VideoWriter(video_path, fourcc, RECORD_FPS, (w, h))
     recording_start_time = time.time()
-    recording_end_time = recording_start_time + config.DETECTION_DURATION
+    recording_end_time = recording_start_time + detection_duration
     recording_frames = 0
     is_recording = True
 

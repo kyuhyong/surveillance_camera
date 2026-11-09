@@ -14,7 +14,8 @@ from flask_cors import CORS
 import config
 import threading
 # To store armed state into json file
-from state_manager import get_armed_status, set_armed_status, get_motion_sensitivity, set_motion_sensitivity
+from state_manager import get_armed_status, set_armed_status, get_motion_sensitivity, set_motion_sensitivity, \
+    get_detection_duration, set_detection_duration
 import multiprocessing
 from detector_service import detector_service  # Import function from `detector_service.py`
 import requests
@@ -319,7 +320,8 @@ def get_settings():
     return jsonify({
         # Fetch from state stored in json file
         "isArmed": get_armed_status(), #isArmed,
-        "motion_sensitivity": get_motion_sensitivity() #motion_sensitivity
+        "motion_sensitivity": get_motion_sensitivity(), #motion_sensitivity
+        "detection_duration": get_detection_duration()
     })
 
 @app.route('/api/toggle_mode', methods=['POST'])
@@ -349,6 +351,13 @@ def set_sensitivity():
     set_motion_sensitivity(motion_sensitivity)
     print(f"🎯 Motion detection sensitivity set to: {motion_sensitivity}")
     return jsonify({"message": f"Sensitivity set to {motion_sensitivity}"})
+
+@app.route('/api/set_detection_duration', methods=['POST'])
+def set_detection_duration_route():
+    data = request.json or {}
+    duration = set_detection_duration(data.get('duration', config.DETECTION_DURATION))
+    print(f"⏱️ Recording duration set to: {duration}s")
+    return jsonify({"message": f"Recording duration set to {duration}s", "duration": duration})
 
 @app.route('/api/clips')
 def get_clips():
