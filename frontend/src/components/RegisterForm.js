@@ -1,55 +1,35 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { FaUserPlus } from 'react-icons/fa';
 import { API_BASE_URL } from '../config';
+
+const MIN_PASSWORD_LENGTH = 4;
 
 export default function RegisterForm() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [passwordError, setPasswordError] = useState('');
     const [email, setEmail] = useState('');
     const [registrationCode, setRegistrationCode] = useState('');
+    const [passwordError, setPasswordError] = useState('');
     const [confirmError, setConfirmError] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
-
-    // Password Strength Check
-    const validatePassword = (password) => {
-        const minLength = password.length >= 4;
-        // const hasUppercase = /[A-Z]/.test(password);
-        // const hasLowercase = /[a-z]/.test(password);
-        // const hasNumber = /\d/.test(password);
-        // const hasSpecialChar = /[@$!%*?&]/.test(password);
-
-        if (!minLength) return "Password must be at least 8 characters.";
-        // if (!hasUppercase) return "Password must include an uppercase letter.";
-        // if (!hasLowercase) return "Password must include a lowercase letter.";
-        // if (!hasNumber) return "Password must include a number.";
-        // if (!hasSpecialChar) return "Password must include a special character (@, $, !, %, etc.).";
-
-        return "";  // Empty string means the password is valid
-    };
 
     const handleRegister = async (e) => {
         e.preventDefault();
+        setError('');
 
-        // Validate password
-        const passwordError = validatePassword(password);
-        if (passwordError) {
-            setPasswordError(passwordError);
-            return;
-        } else {
-            setPasswordError('');
-        }
+        const pwError = password.length < MIN_PASSWORD_LENGTH
+            ? `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`
+            : '';
+        const cfError = password !== confirmPassword ? 'Passwords do not match.' : '';
+        setPasswordError(pwError);
+        setConfirmError(cfError);
+        if (pwError || cfError) return;
 
-        // Confirm Password Check
-        if (password !== confirmPassword) {
-            setConfirmError('Passwords do not match.');
-            return;
-        } else {
-            setConfirmError('');
-        }
-
-        // Proceed with registration logic
+        setLoading(true);
         try {
             const response = await fetch(`${API_BASE_URL}/api/register`, {
                 method: 'POST',
@@ -61,105 +41,108 @@ export default function RegisterForm() {
                     registration_code: registrationCode
                 })
             });
-
             const data = await response.json();
             if (response.ok) {
-                alert('Registration successful! Please check your email to verify your account.');
+                alert(data.message || 'Registration successful! Please check your email to verify your account.');
                 navigate('/login');
             } else {
-                alert(`Registration failed: ${data.error || "Unknown error"}`);
+                setError(data.error || 'Registration failed');
             }
-        } catch (error) {
-            alert('Network error: Unable to connect to server.');
+        } catch (err) {
+            setError('Unable to connect to the server.');
+        } finally {
+            setLoading(false);
         }
     };
 
     return (
-        <div style={styles.container}>
-            <h2>Register</h2>
-            <form onSubmit={handleRegister} style={styles.form}>
-                <div style={styles.inputGroup}>
-                    <label>Username:</label>
-                    <input
-                        type="text"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                    />
+        <div className="auth-page">
+            <div className="auth-card">
+                <div className="auth-brand">
+                    <div className="auth-logo"><FaUserPlus /></div>
+                    <h1>Create account</h1>
+                    <p>You'll need a registration code from the owner</p>
                 </div>
-                <div style={styles.inputGroup}>
-                    <label>Password:</label>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                    />
+
+                <form onSubmit={handleRegister} className="form" noValidate>
+                    {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+                    <div className="field">
+                        <label htmlFor="reg-username">Username</label>
+                        <input
+                            id="reg-username"
+                            type="text"
+                            autoComplete="username"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            required
+                        />
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="reg-password">Password</label>
+                        <input
+                            id="reg-password"
+                            type="password"
+                            autoComplete="new-password"
+                            className={passwordError ? 'invalid' : ''}
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                        />
+                        {passwordError && <span className="field-error">{passwordError}</span>}
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="reg-confirm">Confirm password</label>
+                        <input
+                            id="reg-confirm"
+                            type="password"
+                            autoComplete="new-password"
+                            className={confirmError ? 'invalid' : ''}
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            required
+                        />
+                        {confirmError && <span className="field-error">{confirmError}</span>}
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="reg-email">E-mail</label>
+                        <input
+                            id="reg-email"
+                            type="email"
+                            inputMode="email"
+                            autoComplete="email"
+                            autoCapitalize="none"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="reg-code">Registration code</label>
+                        <input
+                            id="reg-code"
+                            type="text"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            value={registrationCode}
+                            onChange={(e) => setRegistrationCode(e.target.value)}
+                        />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+                        {loading ? 'Creating account…' : 'Create account'}
+                    </button>
+                </form>
+
+                <div className="auth-footer">
+                    Already have an account? <Link to="/login" className="btn-link">Sign in</Link>
                 </div>
-                <div style={styles.inputGroup}>
-                    <label>Confirm Password:</label>
-                    <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        required
-                    />
-                    {confirmError && <p style={styles.error}>{confirmError}</p>}
-                </div>
-                <div style={styles.inputGroup}>
-                    <label>E-mail:</label>
-                    <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                    />
-                </div>
-                <div style={styles.inputGroup}>
-                    <label>Registration Code:</label>
-                    <input
-                        type="text"
-                        value={registrationCode}
-                        onChange={(e) => setRegistrationCode(e.target.value)}
-                    />
-                </div>
-                <button type="submit" style={styles.button}>
-                    Register
-                </button>
-            </form>
+            </div>
         </div>
     );
 }
-
-const styles = {
-    container: {
-        width: '300px',
-        margin: '100px auto',
-        padding: '20px',
-        border: '2px solid #4CAF50',
-        borderRadius: '8px',
-        backgroundColor: '#f0f2f5'
-    },
-    form: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '15px'
-    },
-    inputGroup: {
-        display: 'flex',
-        flexDirection: 'column'
-    },
-    button: {
-        backgroundColor: '#4CAF50',
-        color: '#fff',
-        border: 'none',
-        padding: '10px',
-        borderRadius: '5px',
-        cursor: 'pointer',
-        transition: 'background-color 0.2s ease'
-    },
-    error: {
-        color: '#f44336',
-        fontSize: '14px',
-        marginTop: '5px'
-    }
-};

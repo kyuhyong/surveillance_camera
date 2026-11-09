@@ -1,92 +1,80 @@
-import React from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { FaSignOutAlt, FaVideo } from 'react-icons/fa';
 import LiveStream from './LiveStream';
 import ToggleMode from './ToggleMode';
 import ClipsList from './ClipsList';
-import { FaSignOutAlt } from 'react-icons/fa';  // Import Logout Icon
 import { API_BASE_URL } from '../config';
 
 export default function Dashboard() {
     const navigate = useNavigate();
+    const [isArmed, setIsArmed] = useState(null); // null = not loaded yet
+    const [toast, setToast] = useState(null);
+    const toastTimer = useRef(null);
+    const username = localStorage.getItem('username');
+
+    const notify = useCallback((message, type = 'info') => {
+        clearTimeout(toastTimer.current);
+        setToast({ message, type });
+        toastTimer.current = setTimeout(() => setToast(null), 3000);
+    }, []);
 
     const handleLogout = async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/api/logout`, {
-                method: "POST",
-                credentials: "include"
-             });
-            const data = await res.json();
-            if (res.ok) {
-                localStorage.removeItem("isLoggedIn");
-                alert(data.message || "Logged out successfully!");
-                navigate("/login");
-            } else {
-                alert(data.error || "Logout failed");
-            }
+            await fetch(`${API_BASE_URL}/api/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
         } catch (err) {
-            console.error("Logout error:", err);
-            alert("Network error: Could not logout");
+            console.error('Logout error:', err);
         }
+        // Clear local state regardless, so the user is never stuck logged in
+        localStorage.removeItem('isLoggedIn');
+        localStorage.removeItem('username');
+        navigate('/login');
     };
+
     return (
-        <div style={styles.container}>
-            <div style={styles.header}>
-                <h1>Surveillance System Dashboard</h1>
-                {/* Logout Button with Icon */}
-                <button onClick={handleLogout} style={styles.logoutButton} title="Logout">
-                    <FaSignOutAlt size={25} />
-                </button>
-            </div>
-            <div style={styles.content}>
-                <LiveStream />
-                <ToggleMode />
-                <ClipsList />
-            </div>
-        </div>
+        <>
+            <header className="app-header">
+                <div className="app-title">
+                    <FaVideo className="logo" />
+                    <h1>Surveillance</h1>
+                    {isArmed !== null && (
+                        <span className={`pill ${isArmed ? 'pill-armed' : 'pill-disarmed'}`}>
+                            <span className="dot" />
+                            {isArmed ? 'Armed' : 'Disarmed'}
+                        </span>
+                    )}
+                </div>
+                <div className="header-actions">
+                    {username && <span className="header-user">{username}</span>}
+                    <button
+                        className="icon-btn danger"
+                        onClick={handleLogout}
+                        title="Sign out"
+                        aria-label="Sign out"
+                    >
+                        <FaSignOutAlt size={18} />
+                    </button>
+                </div>
+            </header>
+
+            <main className="dashboard">
+                <div className="dashboard-main">
+                    <LiveStream />
+                    <ToggleMode onArmedChange={setIsArmed} notify={notify} />
+                </div>
+                <div className="dashboard-side">
+                    <ClipsList notify={notify} />
+                </div>
+            </main>
+
+            {toast && (
+                <div className={`toast ${toast.type === 'error' ? 'error' : ''}`} role="status">
+                    {toast.message}
+                </div>
+            )}
+        </>
     );
 }
-
-const styles = {
-    container: {
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',          // Full viewport height
-        overflow: 'hidden',        // Prevents unnecessary overflow
-    },
-    header: {
-        backgroundColor: '#969696', // Light grey background for the header
-        color: 'white',
-        padding: '8px',
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
-        display: 'flex',
-        justifyContent: 'space-between',  // Header items spread out
-        alignItems: 'center',
-        marginTop: '1px',         // Smaller top margin
-        height: '85px'
-    },
-    logoutButton: {
-        backgroundColor: '#c91414', // Red logout button
-        color: '#fff',
-        border: 'none',
-        borderRadius: '10px',
-        padding: '8px 12px',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '100px',
-        height: '40px',
-        transition: 'background-color 0.2s ease'
-    },
-    logoutButtonHover: {
-        backgroundColor: '#d32f2f'
-    },
-    content: {
-        flex: 1,                  // Ensures the content area expands
-        overflowY: 'auto',        // Enables vertical scrolling
-        padding: '5px',
-        backgroundColor: '#f0f2f5' // Soft gray for background
-    }
-};

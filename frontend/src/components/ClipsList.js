@@ -1,223 +1,225 @@
-import React, { useState, useEffect } from 'react';
-import { FaTrash } from 'react-icons/fa';  // Import trash icon
-import { FaDownload } from 'react-icons/fa';  // Import download icon
+import React, { useState, useEffect, useMemo } from 'react';
+import { FaTrash, FaDownload, FaPlay, FaFilm, FaTimes } from 'react-icons/fa';
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '../config';
 
-export default function ClipsList() {
-    const [clips, setClips] = useState([]);
-    const [selectedVideo, setSelectedVideo] = useState(null);  // Video selected for playback
+// Clip timestamps come from the backend as "YYYY-MM-DD HH-MM-SS"
+function parseTimestamp(timestamp) {
+    const [date = '', time = ''] = timestamp.split(' ');
+    return { date, time: time.replace(/-/g, ':') };
+}
 
+function formatDateHeading(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr;
+    const date = new Date(y, m - 1, d);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((today - date) / 86400000);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    return date.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric'
+    });
+}
+
+// Group clips by date (newest date first), clips within a date newest first
+function groupByDate(clips) {
+    const groups = {};
+    clips.forEach((clip) => {
+        const { date, time } = parseTimestamp(clip.timestamp);
+        (groups[date] = groups[date] || []).push({ ...clip, time });
+    });
+    return Object.entries(groups)
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([date, items]) => [date, items.sort((a, b) => b.time.localeCompare(a.time))]);
+}
+
+function Modal({ onClose, className = '', children }) {
     useEffect(() => {
-        fetch(`${API_BASE_URL}/api/clips`)
-            .then(res => res.json())
-            .then(setClips)
-            .catch(error => console.error('Error fetching clips:', error));
-        // Connect to WebSocket for real-time updates
-        const socket = io(API_BASE_URL || undefined); // undefined = same origin
-        socket.on('new_clip', (newClip) => {
-            setClips((prevClips) => [newClip, ...prevClips]); // Add new clips at the top
-        });
-
-        return () => socket.disconnect();
-    }, []);
-
-    // Group clips by date and time
-    const groupByDate = (clips) => {
-        const grouped = clips.reduce((acc, clip) => {
-            const [date] = clip.timestamp.split(' '); // Extract date only
-            if (!acc[date]) {
-                acc[date] = [];
-            }
-            acc[date].push(clip);
-            return acc;
-        }, {});
-
-        // Sort dates (latest date first)
-        const sortedDates = Object.entries(grouped).sort((a, b) => new Date(b[0]) - new Date(a[0]));
-
-        // Sort clips within each date group by time (latest first)
-        const sortedGrouped = {};
-        sortedDates.forEach(([date, clipsForDate]) => {
-            sortedGrouped[date] = clipsForDate.sort((a, b) => {
-                // Correctly convert timestamps into Date objects for sorting
-                //const timeA = new Date(a.timestamp.replace(' ', 'T').replace(/-/g, ':'));
-                //const timeB = new Date(b.timestamp.replace(' ', 'T').replace(/-/g, ':'));
-                const timeA = new Date(`${date}T${a.timestamp.split(' ')[1].replace(/-/g, ':')}`);
-                const timeB = new Date(`${date}T${b.timestamp.split(' ')[1].replace(/-/g, ':')}`);
-                return timeB - timeA;  // Sort latest first
-            });
-            console.log()
-        });
-
-        return sortedGrouped;
-    };
-
-    const groupedClips = groupByDate(clips);
-
-    const handleDelete = async (filename) => {
-        await fetch(`${API_BASE_URL}/api/delete_clip/${filename}`, { method: 'DELETE' });
-        setClips(clips.filter(clip => clip.video_filename !== filename));
-    };
-    // Download Handler
-    const handleDownload = (filename) => {
-        const downloadUrl = `${API_BASE_URL}/api/download_clip/${filename}`;
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = filename; // Ensures the proper filename is set
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
-    const handleImageClick = (videoFilename) => {
-        // Toggle video playback when image is clicked
-        setSelectedVideo(selectedVideo === videoFilename ? null : videoFilename);
-    };
+        const onKey = (e) => e.key === 'Escape' && onClose();
+        document.addEventListener('keydown', onKey);
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            document.body.style.overflow = prevOverflow;
+        };
+    }, [onClose]);
 
     return (
-        <div style={styles.container}>
-            <h2>Recorded Clips</h2>
-            {/*{clips.length === 0 && <p>No clips available</p>}*/}
-            {Object.keys(groupedClips).length === 0 && <p>No clips available</p>}
-
-            {Object.entries(groupedClips).map(([date, clipsForDate]) => (
-                <div key={date} style={styles.dateGroup}>
-                    <h3 style={styles.dateHeader}>{date}</h3>
-
-                    {clipsForDate.map((clip) => (
-                        <div key={clip.id} style={styles.clipContainer}>
-                            {/* Timestamp Display */}
-                            <div style={styles.infoContainer}>
-                                <p style={styles.timestamp}>{clip.timestamp}</p>
-                            </div>
-                            {/* Thumbnail Image */}
-                            <img
-                                src={`${API_BASE_URL}/api/image/${clip.image_filename}`}
-                                alt="Captured frame"
-                                style={styles.imagePreview}
-                                onClick={() => handleImageClick(clip.video_filename)}
-                                //onClick={() => setSelectedVideo(clip.video_filename)}  // Click image to play video
-                            />
-                            {/* Playable Video (if selected) */}
-                            {selectedVideo === clip.video_filename && (
-                                <video controls width="320" height="240" autoPlay>
-                                    <source
-                                        src={`${API_BASE_URL}/api/video/${clip.video_filename}`}
-                                        type="video/mp4"
-                                    />
-                                    Your browser does not support the video tag.
-                                </video>
-                            )}
-                            {/* Download Button with Icon */}
-                            <button
-                                style={styles.downloadButton}
-                                onClick={() => handleDownload(clip.video_filename)}
-                                title="Download this clip"
-                            >
-                                <FaDownload style={styles.icon} />
-                            </button>
-
-                            {/* Smaller Delete Button with Trash Icon */}
-                            <button 
-                                style={styles.deleteButton} 
-                                onClick={() => handleDelete(clip.video_filename)}
-                                title="Delete this clip"
-                            >
-                                <FaTrash />
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            ))}
+        <div className="modal-backdrop" onClick={onClose}>
+            <div
+                className={`modal ${className}`}
+                role="dialog"
+                aria-modal="true"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {children}
+            </div>
         </div>
     );
 }
 
-// Inline CSS for improved layout
-const styles = {
-    container: {
-        maxHeight: '60vh',
-        overflowY: 'auto',
-        padding: '10px'
-    },
-    dateGroup: {
-        marginBottom: '20px',
-        borderBottom: '2px solid #4CAF50',
-        paddingBottom: '10px'
-    },
-    dateHeader: {
-        backgroundColor: '#4CAF50',
-        color: '#fff',
-        padding: '8px 12px',
-        borderRadius: '4px',
-        marginBottom: '8px'
-    },
-    clipsContainer: {
-        maxHeight: '60vh',       // Limits the height of ClipsList to enable scrolling
-        overflowY: 'auto',       // Enables scroll only for ClipsList
-        padding: '10px'
-    },
-    clipContainer: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: '10px',
-        border: '1px solid #ccc',
-        padding: '10px',
-        borderRadius: '5px',
-        backgroundColor: '#f9f9f9'
-    },
-    infoContainer: {
-        display: 'flex',
-        flexDirection: 'column',
-        marginRight: '10px'
-    },
-    timestamp: {
-        fontWeight: 'bold',
-        color: '#4CAF50',
-        marginBottom: '5px'
-    },
-    imagePreview: {
-        width: '100px',
-        height: 'auto',
-        cursor: 'pointer',
-        borderRadius: '5px'
-    },
-    deleteButton: {
-        backgroundColor: '#c91414',
-        color: '#fff',
-        border: 'none',
-        padding: '8px 10px',
-        borderRadius: '30%',     // Circular rect button
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        width: '40px',           // Small size
-        height: '40px',
-        transition: 'background-color 0.2s ease'
-    },
-    deleteButtonHover: {
-        backgroundColor: '#d32f2f' // Darker red on hover
-    },
-    downloadButton: {
-        backgroundColor: '#4CAF50',
-        color: '#fff',
-        border: 'none',
-        padding: '8px 10px',
-        borderRadius: '30%',
-        width: '40px',
-        height: '40px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        transition: 'background-color 0.2s ease'
-    },
-    downloadButtonHover: {
-        backgroundColor: '#45a049'
-    },
-    icon: {
-        fontSize: '18px'
-    }
-};
+export default function ClipsList({ notify = () => {} }) {
+    const [clips, setClips] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [playing, setPlaying] = useState(null);   // clip being played
+    const [confirming, setConfirming] = useState(null); // clip pending deletion
+
+    useEffect(() => {
+        fetch(`${API_BASE_URL}/api/clips`)
+            .then((res) => res.json())
+            .then(setClips)
+            .catch((error) => {
+                console.error('Error fetching clips:', error);
+                notify('Could not load recorded clips', 'error');
+            })
+            .finally(() => setLoading(false));
+
+        // Real-time updates when a new clip is recorded
+        const socket = io(API_BASE_URL || undefined); // undefined = same origin
+        socket.on('new_clip', (newClip) => {
+            setClips((prev) =>
+                prev.some((c) => c.video_filename === newClip.video_filename) ? prev : [newClip, ...prev]
+            );
+        });
+        return () => socket.disconnect();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const grouped = useMemo(() => groupByDate(clips), [clips]);
+
+    const handleDelete = async (clip) => {
+        setConfirming(null);
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/delete_clip/${clip.video_filename}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            setClips((prev) => prev.filter((c) => c.video_filename !== clip.video_filename));
+            if (playing && playing.video_filename === clip.video_filename) setPlaying(null);
+            notify('Clip deleted');
+        } catch (err) {
+            notify('Failed to delete clip', 'error');
+        }
+    };
+
+    const downloadUrl = (clip) => `${API_BASE_URL}/api/download_clip/${clip.video_filename}`;
+
+    return (
+        <section className="card">
+            <div className="card-header">
+                <h2>Recorded clips</h2>
+                {clips.length > 0 && <span className="clip-count">{clips.length}</span>}
+            </div>
+
+            <div className="card-body">
+                {loading && <div className="empty"><div className="spinner" style={{ margin: '0 auto' }} /></div>}
+
+                {!loading && grouped.length === 0 && (
+                    <div className="empty">
+                        <FaFilm />
+                        <div>No clips recorded yet</div>
+                        <div className="muted">Arm the camera to record when motion is detected.</div>
+                    </div>
+                )}
+
+                {grouped.map(([date, items]) => (
+                    <div key={date} className="date-group">
+                        <h3 className="date-header">
+                            <span>{formatDateHeading(date)}</span>
+                            <span>{items.length}</span>
+                        </h3>
+                        <div className="clip-grid">
+                            {items.map((clip) => (
+                                <div key={clip.video_filename} className="clip">
+                                    <button
+                                        className="clip-thumb"
+                                        onClick={() => setPlaying(clip)}
+                                        aria-label={`Play clip from ${clip.time}`}
+                                    >
+                                        <img
+                                            src={`${API_BASE_URL}/api/image/${clip.image_filename}`}
+                                            alt=""
+                                            loading="lazy"
+                                        />
+                                        <span className="play"><FaPlay /></span>
+                                    </button>
+                                    <div className="clip-meta">
+                                        <span className="clip-time">{clip.time}</span>
+                                        <div className="clip-actions">
+                                            <a
+                                                className="icon-btn"
+                                                href={downloadUrl(clip)}
+                                                download={clip.video_filename}
+                                                title="Download"
+                                                aria-label="Download clip"
+                                            >
+                                                <FaDownload size={14} />
+                                            </a>
+                                            <button
+                                                className="icon-btn danger"
+                                                onClick={() => setConfirming(clip)}
+                                                title="Delete"
+                                                aria-label="Delete clip"
+                                            >
+                                                <FaTrash size={13} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {playing && (
+                <Modal onClose={() => setPlaying(null)}>
+                    <div className="card-header">
+                        <h2>{formatDateHeading(parseTimestamp(playing.timestamp).date)} · {playing.time}</h2>
+                        <button className="icon-btn" onClick={() => setPlaying(null)} aria-label="Close">
+                            <FaTimes />
+                        </button>
+                    </div>
+                    <video
+                        key={playing.video_filename}
+                        controls
+                        autoPlay
+                        playsInline
+                        poster={`${API_BASE_URL}/api/image/${playing.image_filename}`}
+                        src={`${API_BASE_URL}/api/video/${playing.video_filename}`}
+                    >
+                        Your browser does not support the video tag.
+                    </video>
+                    <div className="modal-footer">
+                        <a className="btn btn-ghost" href={downloadUrl(playing)} download={playing.video_filename}>
+                            <FaDownload size={14} /> Download
+                        </a>
+                        <button className="btn btn-ghost" onClick={() => { setConfirming(playing); setPlaying(null); }}>
+                            <FaTrash size={13} /> Delete
+                        </button>
+                    </div>
+                </Modal>
+            )}
+
+            {confirming && (
+                <Modal className="small" onClose={() => setConfirming(null)}>
+                    <div className="modal-text">
+                        <h3>Delete this clip?</h3>
+                        <p>
+                            {formatDateHeading(parseTimestamp(confirming.timestamp).date)} at{' '}
+                            {parseTimestamp(confirming.timestamp).time}. This can't be undone.
+                        </p>
+                    </div>
+                    <div className="modal-footer">
+                        <button className="btn btn-ghost" onClick={() => setConfirming(null)}>Cancel</button>
+                        <button className="btn btn-danger" onClick={() => handleDelete(confirming)}>Delete</button>
+                    </div>
+                </Modal>
+            )}
+        </section>
+    );
+}

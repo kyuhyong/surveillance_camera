@@ -1,215 +1,191 @@
 import React, { useState, useEffect } from 'react';
-import { FaCog } from 'react-icons/fa'; // Gear Icon
+import { FaChevronDown, FaShieldAlt, FaPowerOff } from 'react-icons/fa';
 import { API_BASE_URL } from '../config';
 
-export default function ToggleMode() {
-    const [showSettings, setShowSettings] = useState(false); // State for expanded panel
-    const [isArmed, setIsArmed] = useState(false);
-    const [sendNotification, setSendNotification] = useState(false);
-    const [sensitivity, setSensitivity] = useState(3);  // Default sensitivity level
-    const [duration, setDuration] = useState(5);  // Recording length in seconds
+const SENSITIVITY_LABELS = ['', 'Very low', 'Low', 'Medium', 'High', 'Very high'];
 
-    // Load settings on initial page load
+async function postJson(path, body) {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json().catch(() => ({}));
+}
+
+// Percentage of the slider track to fill (used by the WebKit track gradient)
+const fill = (value, min, max) => ({ '--fill': `${((value - min) / (max - min)) * 100}%` });
+
+export default function ToggleMode({ onArmedChange = () => {}, notify = () => {} }) {
+    const [showSettings, setShowSettings] = useState(false);
+    const [isArmed, setIsArmed] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [sendNotification, setSendNotification] = useState(false);
+    const [sensitivity, setSensitivity] = useState(3);
+    const [duration, setDuration] = useState(5); // recording length in seconds
+
     useEffect(() => {
         const loadSettings = async () => {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/get_settings`);
                 const data = await response.json();
-
-                setIsArmed(data.isArmed);
-                setSensitivity(data.motion_sensitivity);
+                setIsArmed(!!data.isArmed);
+                onArmedChange(!!data.isArmed);
+                if (data.motion_sensitivity) setSensitivity(data.motion_sensitivity);
                 if (data.detection_duration) setDuration(data.detection_duration);
             } catch (error) {
                 console.error('Error fetching settings:', error);
+                notify('Could not load camera settings', 'error');
             }
         };
-
         loadSettings();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleToggle = async () => {
         const newState = !isArmed;
-        setIsArmed(newState);
+        setBusy(true);
+        try {
+            await postJson('/api/toggle_mode', { isArmed: newState });
+            setIsArmed(newState);
+            onArmedChange(newState);
+            notify(newState ? 'Camera armed: motion will be recorded' : 'Camera disarmed');
+        } catch (err) {
+            notify('Failed to change camera mode', 'error');
+        } finally {
+            setBusy(false);
+        }
+    };
 
-        await fetch(`${API_BASE_URL}/api/toggle_mode`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ isArmed: newState })
-        });
+    // Save sensitivity / duration once the slider is released, not on every drag step
+    const saveSensitivity = async (event) => {
+        try {
+            await postJson('/api/set_sensitivity', { sensitivity: Number(event.target.value) });
+        } catch (err) {
+            notify('Failed to save sensitivity', 'error');
+        }
     };
-    // Change Sensitivity
-    const handleSensitivityChange = async (event) => {
-        const newSensitivity = Number(event.target.value);
-        setSensitivity(newSensitivity);
 
-        await fetch(`${API_BASE_URL}/api/set_sensitivity`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sensitivity: newSensitivity })
-        });
-    };
-    // Change Recording Duration: update the label while dragging,
-    // save once the slider is released
-    const handleDurationChange = (event) => {
-        setDuration(Number(event.target.value));
-    };
     const saveDuration = async (event) => {
-        await fetch(`${API_BASE_URL}/api/set_detection_duration`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ duration: Number(event.target.value) })
-        });
+        try {
+            await postJson('/api/set_detection_duration', { duration: Number(event.target.value) });
+        } catch (err) {
+            notify('Failed to save recording duration', 'error');
+        }
     };
-    // Toggle Notification Checkbox
-    const handleNotificationChange = async () => {
-        const newNotificationState = !sendNotification;
-        setSendNotification(newNotificationState);
 
-        await fetch(`${API_BASE_URL}/api/set_notification`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sendNotification: newNotificationState })
-        });
+    const handleNotificationChange = async () => {
+        const newValue = !sendNotification;
+        setSendNotification(newValue);
+        try {
+            await postJson('/api/set_notification', { sendNotification: newValue });
+        } catch (err) {
+            setSendNotification(!newValue);
+            notify('Failed to save notification setting', 'error');
+        }
     };
 
     return (
-        <div style={styles.container}>
-            <div style={styles.mainContent}>
-                <h3>Camera Mode: <b>{isArmed ? 'ARMED' : 'DISARMED'}</b></h3>
-                {/* Gear Icon for Settings */}
-                    <h3>Settings: </h3><FaCog
-                    style={styles.gearIcon}
-                    onClick={() => setShowSettings(!showSettings)}
-                />
+        <section className="card">
+            <div className="card-body">
+                <div className="arm-row">
+                    <div className="arm-status">
+                        <div className={`arm-icon ${isArmed ? 'armed' : 'disarmed'}`}>
+                            <FaShieldAlt />
+                        </div>
+                        <div>
+                            <strong>{isArmed ? 'Armed' : 'Disarmed'}</strong>
+                            <span className="muted">
+                                {isArmed ? 'Recording when motion is detected' : 'Motion recording is off'}
+                            </span>
+                        </div>
+                    </div>
+                    <button
+                        className={`btn ${isArmed ? 'btn-ghost' : 'btn-danger'}`}
+                        onClick={handleToggle}
+                        disabled={busy}
+                    >
+                        <FaPowerOff size={14} />
+                        {isArmed ? 'Disarm' : 'Arm'}
+                    </button>
+                </div>
             </div>
 
-            {/* Expandable Settings Panel */}
+            <button
+                className={`settings-toggle ${showSettings ? 'open' : ''}`}
+                onClick={() => setShowSettings(!showSettings)}
+                aria-expanded={showSettings}
+                aria-controls="camera-settings"
+            >
+                Detection settings
+                <FaChevronDown className="chev" />
+            </button>
+
             {showSettings && (
-                <div style={styles.settingsPanel}>
-                    {/* ARM/DISARM */}
-                    <div style={styles.toggleContainer}>
-                        <button 
-                            style={{
-                                ...styles.toggleButton,
-                                backgroundColor: isArmed ? '#f44336' : '#4CAF50' // Red for ARMED, Green for DISARMED
-                            }}
-                            onClick={handleToggle}
-                        >
-                            {isArmed ? 'Disarm' : 'Arm'}
-                        </button>    
+                <div className="settings" id="camera-settings">
+                    <div className="setting">
+                        <div className="setting-head">
+                            <div>
+                                <label htmlFor="notification">Notifications</label>
+                                <div className="setting-desc">Send an alert when motion is recorded</div>
+                            </div>
+                            <span className="switch">
+                                <input
+                                    type="checkbox"
+                                    id="notification"
+                                    role="switch"
+                                    checked={sendNotification}
+                                    onChange={handleNotificationChange}
+                                />
+                                <span className="track" />
+                            </span>
+                        </div>
                     </div>
-                    {/* Notification Checkbox */}
-                    <div style={styles.checkboxContainer}>
-                        <label htmlFor="notification">Send Notification : </label>
+
+                    <div className="setting">
+                        <div className="setting-head">
+                            <label htmlFor="sensitivity">Motion sensitivity</label>
+                            <span className="setting-value">{SENSITIVITY_LABELS[sensitivity] || sensitivity}</span>
+                        </div>
                         <input
-                            type="checkbox"
-                            id="notification"
-                            checked={sendNotification}
-                            onChange={handleNotificationChange}
-                            style={styles.largeCheckbox}  // Increased size
-                        />    
-                    </div>
-                    {/* Motion Sensitivity Slider */}
-                    <div style={styles.sliderContainer}>
-                        <label htmlFor="sensitivity">Motion Sensitivity :</label>
-                        <input
+                            className="range"
                             type="range"
                             id="sensitivity"
                             min="1"
                             max="5"
+                            step="1"
                             value={sensitivity}
-                            onChange={handleSensitivityChange}
-                            style={styles.slider}
+                            style={fill(sensitivity, 1, 5)}
+                            onChange={(e) => setSensitivity(Number(e.target.value))}
+                            onPointerUp={saveSensitivity}
+                            onKeyUp={saveSensitivity}
                         />
-                        <span>{sensitivity}</span>
+                        <div className="range-labels"><span>Less</span><span>More</span></div>
                     </div>
-                    {/* Recording Duration Slider */}
-                    <div style={styles.sliderContainer}>
-                        <label htmlFor="duration">Recording Duration :</label>
+
+                    <div className="setting">
+                        <div className="setting-head">
+                            <label htmlFor="duration">Recording length</label>
+                            <span className="setting-value">{duration}s</span>
+                        </div>
                         <input
+                            className="range"
                             type="range"
                             id="duration"
                             min="5"
                             max="30"
                             step="1"
                             value={duration}
-                            onChange={handleDurationChange}
+                            style={fill(duration, 5, 30)}
+                            onChange={(e) => setDuration(Number(e.target.value))}
                             onPointerUp={saveDuration}
                             onKeyUp={saveDuration}
-                            style={styles.slider}
                         />
-                        <span>{duration}s</span>
+                        <div className="range-labels"><span>5s</span><span>30s</span></div>
                     </div>
                 </div>
             )}
-        </div>
+        </section>
     );
 }
-
-const styles = {
-    container: {
-        backgroundColor: '#d1d1d1', // Light grey background for the header
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: '10px',
-        margin: '1px 0'
-    },
-    mainContent: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        width: '70%',
-        gap: '10px'
-    },
-    gearIcon: {
-        cursor: 'pointer',
-        fontSize: '24px',
-        color: '#363636',
-        marginLeft: '10px'
-    },
-    settingsPanel: {
-        width: '95%',
-        backgroundColor: '#efe',
-        border: '2px solid #ddd',
-        borderRadius: '10px',
-        padding: '5px',
-        marginTop: '5px',
-        marginBottom: '10px',
-        boxShadow: '10px 4px 8px rgba(0, 0, 0, 0.1)'
-    },
-    toggleContainer: {
-        display: 'flex',
-        alignItems: 'center',         // Align ARM/DISARM + Checkbox horizontally
-        gap: '15px',                  // Adds spacing between items
-        width: '100%',
-        justifyContent: 'center'
-    },
-    toggleButton: {
-        width: '40%',              // Set to 50% width
-        color: 'white',
-        border: 'none',
-        padding: '10px',
-        borderRadius: '10px',
-        cursor: 'pointer',
-        transition: 'background-color 0.2s ease'
-    },
-    checkboxContainer: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '20px'
-    },
-    sliderContainer: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '80px'
-    },
-    largeCheckbox: {
-        transform: 'scale(2)',  // Enlarges the checkbox
-        cursor: 'pointer'
-    },
-    slider: {
-        width: '200px',
-        cursor: 'pointer'
-    }
-};

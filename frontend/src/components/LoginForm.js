@@ -1,108 +1,90 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { FaVideo } from 'react-icons/fa';
 import { API_BASE_URL } from '../config';
 
 export default function LoginForm({ onLoginSuccess }) {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
-    // Login Handler
     const handleLogin = async (e) => {
-        e.preventDefault();  // Prevents page reload
-
+        e.preventDefault();
+        setError('');
+        setLoading(true);
         try {
-            console.log('Base url:', API_BASE_URL);
             const response = await fetch(`${API_BASE_URL}/api/user_login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({ username, password })
             });
-
             const data = await response.json();
 
             if (response.ok) {
-                //alert('Login successful!');
-                localStorage.setItem('isLoggedIn', 'true');  // Store session in localStorage
-                localStorage.setItem('username', username);  // Store username
-                onLoginSuccess();  // Update parent state
-                navigate('/dashboard');  // 👈 Redirect to dashboard or main screen
+                localStorage.setItem('isLoggedIn', 'true');
+                localStorage.setItem('username', username);
+                onLoginSuccess();
+                navigate('/dashboard');
             } else {
-                alert(`Login failed: ${data.error}`);
+                setError(data.error || 'Login failed');
             }
-        } catch (error) {
-            alert('Network error: Unable to connect to server.');
+        } catch (err) {
+            setError('Unable to connect to the server.');
+        } finally {
+            setLoading(false);
         }
-    };
-    const handleRegister = () => {
-        navigate('/register');  // Redirect to the registration page
     };
 
     return (
-        <div style={styles.container}>
-            <h2>Login</h2>
-
-            {/* Form with onSubmit for Enter key support */}
-            <form onSubmit={handleLogin} style={styles.form}>
-                <div style={styles.inputGroup}>
-                    <label>Username:</label>
-                    <input
-                        type="text"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                    />
+        <div className="auth-page">
+            <div className="auth-card">
+                <div className="auth-brand">
+                    <div className="auth-logo"><FaVideo /></div>
+                    <h1>Surveillance System</h1>
+                    <p>Sign in to view your camera</p>
                 </div>
 
-                <div style={styles.inputGroup}>
-                    <label>Password:</label>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                    />
+                <form onSubmit={handleLogin} className="form">
+                    {error && <div className="alert alert-error" role="alert">{error}</div>}
+
+                    <div className="field">
+                        <label htmlFor="username">Username</label>
+                        <input
+                            id="username"
+                            type="text"
+                            autoComplete="username"
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            required
+                        />
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="password">Password</label>
+                        <input
+                            id="password"
+                            type="password"
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            required
+                        />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+                        {loading ? 'Signing in…' : 'Sign in'}
+                    </button>
+                </form>
+
+                <div className="auth-footer">
+                    Don't have an account? <Link to="/register" className="btn-link">Register</Link>
                 </div>
-                {/* Login Button */}
-                <button type="submit" style={styles.button}> {/* onClick={handleLogin}>*/}
-                    Login
-                </button>
-                {/* Registration Button Added */}
-                <p>Don't have an account?</p>
-                <button type="button" onClick={handleRegister}>Register</button>
-                
-            </form>
+            </div>
         </div>
     );
 }
-const styles = {
-    container: {
-        width: '300px',
-        margin: '100px auto',
-        padding: '20px',
-        border: '2px solid #4CAF50',
-        borderRadius: '8px',
-        backgroundColor: '#f0f2f5'
-    },
-    form: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '15px'
-    },
-    inputGroup: {
-        display: 'flex',
-        flexDirection: 'column'
-    },
-    button: {
-        backgroundColor: '#4CAF50',
-        color: '#fff',
-        border: 'none',
-        padding: '10px',
-        borderRadius: '5px',
-        cursor: 'pointer',
-        transition: 'background-color 0.2s ease'
-    },
-    buttonHover: {
-        backgroundColor: '#45a049'
-    }
-};
