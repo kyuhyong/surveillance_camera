@@ -1,3 +1,22 @@
+# Surveillance Camera
+
+## Install on Raspberry Pi
+
+```bash
+git clone https://github.com/kyuhyong/surveillance_camera.git
+cd surveillance_camera
+./install.sh            # run as your normal user, not with sudo
+```
+
+This installs dependencies, builds the frontend, and starts the `surveillance-backend`
+systemd service. Open `http://<pi-ip>:5000` to use the app. Run `./install.sh --help` for options.
+
+- Logs: `journalctl -u surveillance-backend -f`
+- Update: `git pull && ./install.sh --skip-deps`
+- Settings and secrets: `backend/.env` (`SECRET_KEY` is also the registration code)
+- Camera: the Pi camera module (Picamera2) is used automatically if it's installed, otherwise a
+  USB webcam. Set `USE_PICAMERA=1` or `0` in `backend/.env` to force one.
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).

@@ -4,9 +4,9 @@ flask_mail
 flask_session
 flask_socketio
 flask_cors
-flask-socketio
 imutils
-dotenv
+python-dotenv
 numpy<=1.25
 opencv-python<=4.9.0
-gevent
+requests
+simple-websocket

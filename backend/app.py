@@ -76,7 +76,11 @@ CORS(
 socketio = SocketIO(
     app,
     cors_allowed_origins=allowed_origins,
-    manage_session=False
+    manage_session=False,
+    # Threaded Werkzeug server. Without this, Flask-SocketIO silently switches to
+    # gevent if it happens to be installed, which needs monkey-patching this app
+    # doesn't do (blocking calls would freeze the whole server).
+    async_mode="threading"
 )
 
 # Session config
